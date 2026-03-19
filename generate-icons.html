@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Générateur d'icônes PWA</title>
+</head>
+<body>
+  <h1>Générateur d'icônes PWA</h1>
+  <p>Ouvrez cette page dans un navigateur, puis cliquez sur les boutons pour télécharger les icônes.</p>
+  
+  <canvas id="canvas192" width="192" height="192" style="border: 1px solid #ccc; margin: 10px;"></canvas>
+  <button onclick="downloadCanvas('canvas192', 'icon-192x192.png')">Télécharger 192x192</button>
+  
+  <br><br>
+  
+  <canvas id="canvas512" width="512" height="512" style="border: 1px solid #ccc; margin: 10px;"></canvas>
+  <button onclick="downloadCanvas('canvas512', 'icon-512x512.png')">Télécharger 512x512</button>
+
+  <script>
+    function drawIcon(canvasId) {
+      const canvas = document.getElementById(canvasId);
+      const ctx = canvas.getContext('2d');
+      const size = canvas.width;
+      
+      // Fond
+      ctx.fillStyle = '#4DBA87';
+      ctx.fillRect(0, 0, size, size);
+      
+      // Dessiner les rectangles (tickets)
+      ctx.fillStyle = '#fff';
+      const scale = size / 512;
+      
+      // Ticket 1
+      roundRect(ctx, 80 * scale, 80 * scale, 352 * scale, 80 * scale, 8 * scale);
+      // Ticket 2
+      roundRect(ctx, 80 * scale, 190 * scale, 352 * scale, 80 * scale, 8 * scale);
+      // Ticket 3
+      roundRect(ctx, 80 * scale, 300 * scale, 352 * scale, 80 * scale, 8 * scale);
+      
+      // Cercles (checkboxes)
+      ctx.fillStyle = '#4DBA87';
+      ctx.beginPath();
+      ctx.arc(120 * scale, 120 * scale, 15 * scale, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.beginPath();
+      ctx.arc(120 * scale, 230 * scale, 15 * scale, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.beginPath();
+      ctx.arc(120 * scale, 340 * scale, 15 * scale, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    
+    function roundRect(ctx, x, y, width, height, radius) {
+      ctx.beginPath();
+      ctx.moveTo(x + radius, y);
+      ctx.lineTo(x + width - radius, y);
+      ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+      ctx.lineTo(x + width, y + height - radius);
+      ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+      ctx.lineTo(x + radius, y + height);
+      ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+      ctx.lineTo(x, y + radius);
+      ctx.quadraticCurveTo(x, y, x + radius, y);
+      ctx.closePath();
+      ctx.fill();
+    }
+    
+    function downloadCanvas(canvasId, filename) {
+      const canvas = document.getElementById(canvasId);
+      const link = document.createElement('a');
+      link.download = filename;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    }
+    
+    // Dessiner les icônes au chargement
+    drawIcon('canvas192');
+    drawIcon('canvas512');
+  </script>
+</body>
+</html>
