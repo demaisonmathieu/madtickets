@@ -100,7 +100,7 @@ export default {
   },
   methods: {
     async loadData() {
-      this.sprints = await db.db.getAll('sprints')
+      this.sprints = await db.getAllSprints()
       this.projects = await db.getAllProjects()
       this.tickets = await db.getAllTickets()
     },

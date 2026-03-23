@@ -59,6 +59,22 @@
             </option>
           </select>
         </div>
+        <div class="form-group">
+          <label>Followers du projet</label>
+          <div class="followers-picker">
+            <label v-for="user in users" :key="`follower-${user.id}`" class="follower-option">
+              <input
+                type="checkbox"
+                :value="user.id"
+                v-model="form.followerUserIds"
+              />
+              <span>{{ user.displayName }} ({{ user.username }})</span>
+            </label>
+          </div>
+          <small style="color: #666; display: block; margin-top: 0.35rem;">
+            Un utilisateur standard voit ce projet uniquement s'il est follower.
+          </small>
+        </div>
         <div style="display: flex; gap: 1rem;">
           <button type="submit" class="btn btn-primary">Enregistrer</button>
           <button type="button" @click="cancelForm" class="btn btn-secondary">Annuler</button>
@@ -85,6 +101,7 @@
             <div class="header-info">
               <h3>{{ project.name }}</h3>
               <small style="color: #666; display: block; margin-top: 0.25rem;">👤 {{ getUserDisplayName(project.assignedUserId) }}</small>
+              <small style="color: #666; display: block; margin-top: 0.15rem;">👥 {{ getFollowerSummary(project) }}</small>
             </div>
           </div>
         </div>
@@ -128,7 +145,8 @@ export default {
         name: '',
         description: '',
         status: 'active',
-        assignedUserId: null
+        assignedUserId: null,
+        followerUserIds: []
       }
     }
   },
@@ -171,12 +189,18 @@ export default {
       this.projects = await db.getAllProjects()
     },
     async saveProject() {
+      const followerUserIds = this.normalizeFollowerUserIds(this.form.followerUserIds, this.form.assignedUserId)
+
       if (this.editingProject) {
-        await db.updateProject(this.editingProject.id, this.form)
+        await db.updateProject(this.editingProject.id, {
+          ...this.form,
+          followerUserIds
+        })
       } else {
         await db.addProject({
           ...this.form,
-          assignedUserId: this.form.assignedUserId ?? this.currentUserId
+          assignedUserId: this.form.assignedUserId ?? this.currentUserId,
+          followerUserIds
         })
       }
       await this.loadProjects()
@@ -188,7 +212,8 @@ export default {
         name: project.name,
         description: project.description || '',
         status: project.status,
-        assignedUserId: project.assignedUserId ?? null
+        assignedUserId: project.assignedUserId ?? null,
+        followerUserIds: this.normalizeFollowerUserIds(project.followerUserIds, project.assignedUserId)
       }
       this.showForm = true
     },
@@ -199,13 +224,47 @@ export default {
         name: '',
         description: '',
         status: 'active',
-        assignedUserId: this.currentUserId
+        assignedUserId: this.currentUserId,
+        followerUserIds: this.currentUserId ? [this.currentUserId] : []
       }
+    },
+    normalizeFollowerUserIds(followerUserIds, assignedUserId = null) {
+      const ids = new Set()
+      const addId = value => {
+        const numericValue = Number(value)
+        if (Number.isFinite(numericValue) && numericValue > 0) {
+          ids.add(numericValue)
+        }
+      }
+
+      if (Array.isArray(followerUserIds)) {
+        followerUserIds.forEach(addId)
+      }
+
+      addId(assignedUserId)
+      addId(this.currentUserId)
+
+      return Array.from(ids)
     },
     getUserDisplayName(userId) {
       if (!userId) return 'Non assigné'
       const user = this.users.find(u => u.id === userId)
       return user ? `${user.displayName} (${user.username})` : 'Utilisateur inconnu'
+    },
+    getFollowerSummary(project) {
+      const followerIds = this.normalizeFollowerUserIds(project.followerUserIds, project.assignedUserId)
+      if (followerIds.length === 0) return 'Aucun follower'
+
+      const followerNames = followerIds
+        .map(userId => this.users.find(user => user.id === userId))
+        .filter(Boolean)
+        .map(user => user.displayName)
+
+      if (followerNames.length === 0) {
+        return `${followerIds.length} follower(s)`
+      }
+
+      return followerNames.join(', ')
     },
     async deleteProjectConfirm(project) {
       if (confirm(`Êtes-vous sûr de vouloir supprimer le projet "${project.name}" ? Tous les tickets associés seront également supprimés.`)) {
@@ -320,6 +379,31 @@ export default {
   justify-content: space-between;
   align-items: flex-start;
   margin-bottom: 1rem;
+}
+
+.followers-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 0.75rem;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.follower-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+
+.follower-option input {
+  width: auto;
 }
 
 .header-left {

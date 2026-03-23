@@ -56,6 +56,7 @@
         </div>
         <div class="sprint-actions">
           <button @click="viewSprint(sprint)" class="btn btn-primary btn-sm">📋 Détails</button>
+          <button @click="viewSprintGantt(sprint)" class="btn btn-secondary btn-sm">🗓️ Gantt</button>
           <button @click="editSprint(sprint)" class="btn btn-secondary btn-sm">✏️ Modifier</button>
           <button @click="deleteSprintConfirm(sprint)" class="btn btn-danger btn-sm">🗑️ Supprimer</button>
         </div>
@@ -115,15 +116,20 @@
               <div class="view-toggle">
                 <button @click="ticketView = 'list'" :class="{ active: ticketView === 'list' }" class="btn-toggle">📋 Liste</button>
                 <button @click="ticketView = 'kanban'" :class="{ active: ticketView === 'kanban' }" class="btn-toggle">📊 Kanban</button>
+                <button @click="ticketView = 'gantt'" :class="{ active: ticketView === 'gantt' }" class="btn-toggle">🗓️ Gantt</button>
               </div>
             </div>
             
             <div class="form-group">
               <label>Ajouter un ticket</label>
+              <label style="display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; font-size: 0.9rem; color: #555;">
+                <input v-model="showTicketsFromOtherSprints" type="checkbox" />
+                Afficher les tickets déjà affectés à un autre sprint
+              </label>
               <select v-model="ticketToAdd" @change="addTicketToSprint">
                 <option value="">Sélectionner un ticket...</option>
                 <option v-for="ticket in availableTickets" :key="ticket.id" :value="ticket.id">
-                  {{ ticket.title }} ({{ getStatusLabel(ticket.status) }})
+                  {{ ticket.isAlreadyAssignedToAnotherSprint ? '⚠️ ' : '' }}{{ ticket.title }} ({{ getStatusLabel(ticket.status) }}){{ ticket.isAlreadyAssignedToAnotherSprint ? ` • déjà dans ${ticket.sprintName}` : '' }}
                 </option>
               </select>
             </div>
@@ -176,6 +182,38 @@
                   </div>
                 </div>
               </div>
+            </div>
+
+            <!-- Vue Gantt (tâches locales du sprint) -->
+            <div v-if="ticketView === 'gantt'" class="sprint-gantt-wrapper">
+              <div v-if="sprintGanttTasks.length === 0" class="empty-state">
+                Aucune tâche/ticket planifiable pour ce sprint.
+              </div>
+              <template v-else>
+                <div class="sprint-gantt-header">
+                  <div class="sg-task">Tâche locale</div>
+                  <div class="sg-assignee">Assigné</div>
+                  <div class="sg-timeline">
+                    <div class="sg-days" :style="{ gridTemplateColumns: `repeat(${sprintGanttDays.length}, 1fr)` }">
+                      <div v-for="day in sprintGanttDays" :key="`sg-h-${day}`" class="sg-day-label">{{ day.slice(5) }}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-for="task in sprintGanttTasks" :key="`sg-${task.id}`" class="sprint-gantt-row">
+                  <div class="sg-task">
+                    <strong>{{ task.title }}</strong>
+                    <div class="small text-muted">
+                      {{ task.sourceType === 'ticket' ? '🎫 Ticket' : '✅ Tâche locale' }} • {{ task.ganttStartDate }} • {{ task.estimatedTime }}h
+                      <span v-if="task.sourceType === 'ticket' && task.hasEstimatedTime === false">(auto)</span>
+                    </div>
+                  </div>
+                  <div class="sg-assignee">{{ getUserDisplayName(task.assignedUserId) }}</div>
+                  <div class="sg-timeline">
+                    <div class="sg-bar" :style="getSprintGanttBarStyle(task)"></div>
+                  </div>
+                </div>
+              </template>
             </div>
             
             <div v-if="getSprintTickets(selectedSprint.id).length === 0" class="empty-state">
@@ -253,10 +291,13 @@ export default {
       project: null,
       sprints: [],
       tickets: [],
+      localTasks: [],
+      users: [],
       showForm: false,
       editingSprint: null,
       selectedSprint: null,
       ticketToAdd: '',
+      showTicketsFromOtherSprints: false,
       newNote: '',
       editingNoteId: null,
       editingNoteContent: '',
@@ -288,10 +329,22 @@ export default {
     }
   },
   computed: {
+    availableTicketsSource() {
+      return this.tickets
+        .filter(t => !this.isCompletedTicketStatus(t.status))
+        .map(ticket => {
+          const isAlreadyAssignedToAnotherSprint = !!ticket.sprintId && ticket.sprintId !== this.selectedSprint?.id
+          return {
+            ...ticket,
+            isAlreadyAssignedToAnotherSprint,
+            sprintName: isAlreadyAssignedToAnotherSprint ? this.getSprintName(ticket.sprintId) : ''
+          }
+        })
+    },
     availableTickets() {
-      return this.tickets.filter(t => {
-        const isAvailableForSprint = !t.sprintId || t.sprintId === this.selectedSprint?.id
-        return isAvailableForSprint && !this.isCompletedTicketStatus(t.status)
+      return this.availableTicketsSource.filter(ticket => {
+        if (this.showTicketsFromOtherSprints) return true
+        return !ticket.isAlreadyAssignedToAnotherSprint
       })
     },
     kanbanColumns() {
@@ -304,9 +357,97 @@ export default {
         { id: 'in-progress', label: 'En cours', color: '#cfe2ff' },
         { id: 'done', label: 'Terminé', color: '#d1e7dd' }
       ]
+    },
+    sprintGanttTasks() {
+      if (!this.selectedSprint?.id) return []
+      const hoursPerDay = Number(this.project?.hoursPerDay || 8)
+      const localTaskItems = (this.localTasks || [])
+        .filter(task => Number(task.sprintId) === Number(this.selectedSprint.id))
+        .filter(task => Number(task.estimatedTime || 0) > 0)
+        .map(task => {
+          const ganttStartDate = this.toDateOnlyString(task.startDate || task.createdAt || new Date().toISOString())
+          const estimatedHours = Number(task.estimatedTime || 0)
+          const ganttDurationDays = Math.max(1, Math.ceil(estimatedHours / (hoursPerDay > 0 ? hoursPerDay : 8)))
+          return {
+            ...task,
+            sourceType: 'localTask',
+            ganttStartDate,
+            ganttDurationDays,
+            ganttEndDate: this.addDaysToDateString(ganttStartDate, ganttDurationDays - 1)
+          }
+        })
+
+      const ticketItems = (this.tickets || [])
+        .filter(ticket => Number(ticket.sprintId) === Number(this.selectedSprint.id))
+        .map(ticket => {
+          const ganttStartDate = this.toDateOnlyString(ticket.startDate || ticket.createdAt || new Date().toISOString())
+          const estimatedHours = Number(ticket.estimatedTime || 1)
+          const ganttDurationDays = Math.max(1, Math.ceil(estimatedHours / (hoursPerDay > 0 ? hoursPerDay : 8)))
+          return {
+            ...ticket,
+            sourceType: 'ticket',
+            hasEstimatedTime: Number(ticket.estimatedTime || 0) > 0,
+            estimatedTime: estimatedHours,
+            ganttStartDate,
+            ganttDurationDays,
+            ganttEndDate: this.addDaysToDateString(ganttStartDate, ganttDurationDays - 1)
+          }
+        })
+
+      return [...localTaskItems, ...ticketItems]
+        .sort((a, b) => String(a.ganttStartDate).localeCompare(String(b.ganttStartDate)))
+    },
+    sprintGanttDays() {
+      if (!this.sprintGanttTasks.length) return []
+      const starts = this.sprintGanttTasks.map(task => task.ganttStartDate)
+      const ends = this.sprintGanttTasks.map(task => task.ganttEndDate)
+      const minDate = starts.reduce((min, value) => value < min ? value : min, starts[0])
+      const maxDate = ends.reduce((max, value) => value > max ? value : max, ends[0])
+
+      const days = []
+      let cursor = minDate
+      let guard = 0
+      while (cursor <= maxDate && guard < 365) {
+        days.push(cursor)
+        cursor = this.addDaysToDateString(cursor, 1)
+        guard += 1
+      }
+      return days
     }
   },
   methods: {
+    toDateOnlyString(date) {
+      if (!date) return ''
+      const d = new Date(date)
+      if (Number.isNaN(d.getTime())) return String(date)
+      const y = d.getFullYear()
+      const m = String(d.getMonth() + 1).padStart(2, '0')
+      const day = String(d.getDate()).padStart(2, '0')
+      return `${y}-${m}-${day}`
+    },
+    addDaysToDateString(dateStr, daysToAdd) {
+      const [y, m, d] = this.toDateOnlyString(dateStr).split('-').map(Number)
+      const date = new Date(y, (m || 1) - 1, d || 1)
+      date.setDate(date.getDate() + Number(daysToAdd || 0))
+      return this.toDateOnlyString(date)
+    },
+    getUserDisplayName(userId) {
+      if (!userId) return 'Non assigné'
+      const user = this.users.find(u => Number(u.id) === Number(userId))
+      return user ? `${user.displayName} (${user.username})` : `User #${userId}`
+    },
+    getSprintGanttBarStyle(task) {
+      if (!task?.ganttStartDate || !this.sprintGanttDays.length) return {}
+      const startIndex = this.sprintGanttDays.findIndex(day => day === task.ganttStartDate)
+      if (startIndex < 0) return {}
+      const total = this.sprintGanttDays.length
+      const leftPct = (startIndex / total) * 100
+      const widthPct = (Math.max(1, Number(task.ganttDurationDays || 1)) / total) * 100
+      return {
+        left: `${leftPct}%`,
+        width: `${Math.max(widthPct, 2)}%`
+      }
+    },
     isCompletedTicketStatus(status) {
       if (!status) return false
       if (status === 'done' || status === 'completed' || status === 'closed') return true
@@ -324,6 +465,8 @@ export default {
       this.project = await db.getProject(this.projectId)
       this.sprints = await db.getSprintsByProject(this.projectId)
       this.tickets = await db.getTicketsByProject(this.projectId)
+      this.localTasks = await db.getLocalTasksByProject(this.projectId)
+      this.users = await db.getActiveUsers()
     },
     async saveSprint() {
       try {
@@ -377,10 +520,20 @@ export default {
     },
     viewSprint(sprint) {
       this.selectedSprint = sprint
+      this.ticketView = 'kanban'
+      this.newNote = ''
+    },
+    viewSprintGantt(sprint) {
+      this.selectedSprint = sprint
+      this.ticketView = 'gantt'
       this.newNote = ''
     },
     viewTicket(ticketId) {
       this.$router.push(`/tickets/${ticketId}`)
+    },
+    getSprintName(sprintId) {
+      const sprint = this.sprints.find(s => Number(s.id) === Number(sprintId))
+      return sprint?.name || 'un autre sprint'
     },
     getSprintTickets(sprintId) {
       return this.tickets.filter(t => t.sprintId === sprintId)
@@ -917,6 +1070,68 @@ export default {
   min-height: 400px;
   overflow-x: auto;
   padding-bottom: 1rem;
+}
+
+.sprint-gantt-wrapper {
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-top: 1rem;
+}
+
+.sprint-gantt-header,
+.sprint-gantt-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.3fr) minmax(180px, 1fr) minmax(460px, 3fr);
+  align-items: center;
+}
+
+.sprint-gantt-header {
+  background: #f8f9fa;
+  border-bottom: 1px solid #e9ecef;
+  font-weight: 600;
+}
+
+.sprint-gantt-row {
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.sprint-gantt-row:last-child {
+  border-bottom: none;
+}
+
+.sg-task,
+.sg-assignee,
+.sg-timeline {
+  padding: 0.75rem;
+}
+
+.sg-timeline {
+  position: relative;
+  min-height: 48px;
+}
+
+.sg-days {
+  display: grid;
+  gap: 0;
+}
+
+.sg-day-label {
+  font-size: 0.75rem;
+  color: #666;
+  text-align: center;
+  padding: 0.2rem 0;
+  border-left: 1px solid #f0f0f0;
+}
+
+.sg-bar {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 22px;
+  border-radius: 999px;
+  background: #4DBA87;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
 }
 
 .kanban-column {

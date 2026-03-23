@@ -18,12 +18,14 @@ import OdooTaskDetail from './components/OdooTaskDetail.vue'
 import SprintManagement from './components/SprintManagement.vue'
 import SprintsList from './components/SprintsList.vue'
 import Dashboard from './components/Dashboard.vue'
+import UserGanttView from './components/UserGanttView.vue'
 import DataManagement from './components/DataManagement.vue'
 import DocumentsGED from './components/DocumentsGED.vue'
 import TimeEntriesList from './components/TimeEntriesList.vue'
 import PasswordManager from './components/PasswordManager.vue'
 import Login from './components/Login.vue'
 import UsersManagement from './components/UsersManagement.vue'
+import MenuConfiguration from './components/MenuConfiguration.vue'
 import { auth } from './services/auth'
 
 // Enregistrement du Service Worker désactivé en dev
@@ -49,6 +51,8 @@ const routes: RouteRecordRaw[] = [
   { path: '/login', component: Login, meta: { public: true } },
   { path: '/', redirect: '/dashboard' },
   { path: '/dashboard', component: Dashboard },
+  { path: '/gantt-users', component: UserGanttView },
+  { path: '/menu-config', component: MenuConfiguration },
   { path: '/projects', component: ProjectsList },
   { path: '/projects/:id', component: ProjectDetail },
   { 
@@ -69,8 +73,8 @@ const routes: RouteRecordRaw[] = [
   { path: '/documents', component: DocumentsGED },
   { path: '/passwords', component: PasswordManager },
   { path: '/users', component: UsersManagement, meta: { adminOnly: true } },
-  { path: '/odoo', component: OdooSync },
-  { path: '/data', component: DataManagement },
+  { path: '/odoo', component: OdooSync, meta: { adminOnly: true } },
+  { path: '/data', component: DataManagement, meta: { adminOnly: true } },
   { path: '/:pathMatch(.*)*', redirect: '/dashboard' }
 ]
 
@@ -79,27 +83,44 @@ const router = createRouter({
   routes
 })
 
-router.beforeEach((to, _from, next) => {
+router.beforeEach(async to => {
   const session = auth.getSession()
   const isPublic = Boolean(to.meta?.public)
   const isAdminOnly = Boolean(to.meta?.adminOnly)
 
   if (!session && !isPublic) {
-    next('/login')
-    return
+    return '/login'
   }
 
   if (session && to.path === '/login') {
-    next('/dashboard')
-    return
+    return '/dashboard'
   }
 
   if (isAdminOnly && session?.role !== 'admin') {
-    next('/dashboard')
-    return
+    return '/dashboard'
   }
 
-  next()
+  if (session?.role === 'admin') {
+    return true
+  }
+
+  const projectId = Number(to.params.id)
+  const ticketId = Number(to.params.id)
+  const odooTaskId = Number(to.params.odooId)
+
+  if (to.path.startsWith('/projects/') && Number.isFinite(projectId) && projectId > 0) {
+    return (await db.canAccessProject(projectId)) ? true : '/projects'
+  }
+
+  if (to.path.startsWith('/tickets/') && Number.isFinite(ticketId) && ticketId > 0) {
+    return (await db.canAccessTicket(ticketId)) ? true : '/tickets'
+  }
+
+  if (to.path.startsWith('/tasks/') && Number.isFinite(odooTaskId) && odooTaskId > 0) {
+    return (await db.canAccessOdooTask(odooTaskId)) ? true : '/tasks'
+  }
+
+  return true
 })
 
 // Initialiser la base de données avant de monter l'app

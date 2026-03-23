@@ -6,15 +6,23 @@
   "scripts": {
     "dev": "vite",
     "dev:full": "sh -c 'npm run proxy & npm run dev'",
+    "dev:postgres": "sh -c 'npm run dev:api & npm run dev'",
+    "dev:stack": "sh -c 'npm run dev:api & npm run proxy & npm run dev'",
+    "dev:api": "node server/index.js",
+    "db:init": "node server/init-db.js",
     "build": "vue-tsc && vite build",
     "preview": "vite preview",
-    "proxy": "node proxy.js"
+    "proxy": "node proxy.js",
+    "start:api": "node server/index.js"
   },
   "dependencies": {
     "@vueup/vue-quill": "^1.2.0",
     "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "idb": "^8.0.0",
+    "markdown-it": "^14.1.1",
+    "pg": "^8.20.0",
     "quill": "^2.0.3",
     "vue": "^3.4.21",
     "vue-router": "^4.3.0",

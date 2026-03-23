@@ -10,6 +10,8 @@
           <span class="badge" :class="getRecetteStatusClass(ticket.recetteStatus)">{{ getRecetteStatusLabel(ticket.recetteStatus) }}</span>
           <span v-if="project" class="badge badge-info">{{ project.name }}</span>
             <span v-if="ticket.assignedUserId" class="badge badge-secondary">👤 {{ getUserDisplayName(ticket.assignedUserId) }}</span>
+            <span v-if="ticket.startDate" class="badge badge-info">📅 {{ ticket.startDate }}</span>
+            <span v-if="ticket.estimatedTime" class="badge badge-success">⏱️ {{ ticket.estimatedTime }}h</span>
         </div>
       </div>
       <div style="display: flex; gap: 1rem;">
@@ -61,6 +63,16 @@
             <option value="medium">Moyenne</option>
             <option value="high">Haute</option>
           </select>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Date de début</label>
+            <input v-model="editForm.startDate" type="date" />
+          </div>
+          <div class="form-group">
+            <label>Temps estimé (heures)</label>
+            <input v-model.number="editForm.estimatedTime" type="number" min="0" step="0.5" placeholder="Ex: 12" />
+          </div>
         </div>
 
         <!-- Upload de fichiers -->
@@ -161,6 +173,14 @@
             <div class="info-item">
               <strong>Temps total :</strong>
               <span class="time-badge">{{ formatDuration(totalTime) }}</span>
+            </div>
+            <div class="info-item">
+              <strong>Date de début :</strong>
+              <span>{{ ticket.startDate || 'Non renseignée' }}</span>
+            </div>
+            <div class="info-item">
+              <strong>Temps estimé :</strong>
+              <span>{{ ticket.estimatedTime ? `${ticket.estimatedTime}h` : 'Non renseigné' }}</span>
             </div>
               <div class="info-item">
                 <strong>Assigné à :</strong>
@@ -692,6 +712,8 @@ export default {
         description: '',
         status: 'todo',
         priority: 'medium',
+          startDate: '',
+          estimatedTime: 0,
           attachments: [],
           assignedUserId: null
       },
@@ -862,6 +884,8 @@ export default {
           description: this.ticket.description || '',
           status: this.ticket.status,
           priority: this.ticket.priority,
+            startDate: this.ticket.startDate || '',
+            estimatedTime: Number(this.ticket.estimatedTime || 0),
             attachments: this.ticket.attachments || [],
             assignedUserId: this.ticket.assignedUserId || null
         }
@@ -941,11 +965,14 @@ export default {
       }
     },
     async saveTicket() {
+      const estimatedTime = Number(this.editForm.estimatedTime || 0)
       await db.updateTicket(this.ticket.id, {
         title: this.editForm.title,
         description: this.editForm.description,
         status: this.editForm.status,
         priority: this.editForm.priority,
+          startDate: this.editForm.startDate || null,
+          estimatedTime: estimatedTime > 0 ? estimatedTime : null,
           attachments: this.editForm.attachments,
           assignedUserId: this.editForm.assignedUserId
       })

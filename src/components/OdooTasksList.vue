@@ -272,12 +272,15 @@ export default {
           }
         }
 
-        const tx = db.db.transaction('odooTasks', 'readwrite')
-        await tx.objectStore('odooTasks').clear()
-        await tx.done
-
+        const tasksByProject = new Map()
         for (const task of allTasks) {
-          await db.upsertOdooTask(task)
+          const projectTasks = tasksByProject.get(task.projectOdooId) || []
+          projectTasks.push(task)
+          tasksByProject.set(task.projectOdooId, projectTasks)
+        }
+
+        for (const [projectOdooId, projectTasks] of tasksByProject.entries()) {
+          await db.replaceOdooTasksForProject(projectOdooId, projectTasks)
         }
 
         await this.loadLocalData()

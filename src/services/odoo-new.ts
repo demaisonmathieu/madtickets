@@ -168,8 +168,21 @@ class OdooService {
     this.loadConfig();
   }
 
+  private getStorageKey(): string {
+    try {
+      const raw = localStorage.getItem('tickets.auth.session');
+      if (raw) {
+        const session = JSON.parse(raw);
+        if (session?.userId) {
+          return `odoo-config-${session.userId}`;
+        }
+      }
+    } catch {}
+    return 'odoo-config';
+  }
+
   loadConfig(): void {
-    const config = localStorage.getItem('odoo-config');
+    const config = localStorage.getItem(this.getStorageKey());
     if (config) {
       const parsed: OdooConfig = JSON.parse(config);
       this.url = parsed.url;
@@ -178,6 +191,14 @@ class OdooService {
       this.username = parsed.username ?? null;
       this.password = parsed.password ?? null;
       this.version = parsed.version ?? null;
+    } else {
+      // Réinitialiser si aucune config pour cet utilisateur
+      this.url = null;
+      this.db = null;
+      this.apiKey = null;
+      this.username = null;
+      this.password = null;
+      this.version = null;
     }
   }
 
@@ -195,7 +216,7 @@ class OdooService {
     this.password = password;
 
     localStorage.setItem(
-      'odoo-config',
+      this.getStorageKey(),
       JSON.stringify({
         url,
         db,
@@ -215,7 +236,7 @@ class OdooService {
     this.password = null;
     this.uid = null;
     this.version = null;
-    localStorage.removeItem('odoo-config');
+    localStorage.removeItem(this.getStorageKey());
   }
 
   stripHtml(html: string | null | undefined): string {

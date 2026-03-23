@@ -107,6 +107,12 @@
             ✅ Tâches Locales
           </button>
           <button
+            @click="projectContentView = 'gantt'"
+            :class="['btn', projectContentView === 'gantt' ? 'btn-primary' : 'btn-secondary']"
+          >
+            🗓️ Gantt
+          </button>
+          <button
             @click="projectContentView = 'attachments'"
             :class="['btn', projectContentView === 'attachments' ? 'btn-primary' : 'btn-secondary']"
           >
@@ -222,6 +228,16 @@
                   {{ user.displayName }} ({{ user.username }})
                 </option>
               </select>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Date de début</label>
+                <input v-model="ticketForm.startDate" type="date" />
+              </div>
+              <div class="form-group">
+                <label>Temps estimé (heures)</label>
+                <input v-model.number="ticketForm.estimatedTime" type="number" min="0" step="0.5" placeholder="Ex: 16" />
+              </div>
             </div>
             <div class="form-group" style="display: flex; flex-direction: column; gap: 0.5rem;">
               <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
@@ -766,6 +782,23 @@
                 </select>
               </div>
               <div class="form-group">
+                <label>Date de début</label>
+                <input v-model="localTaskForm.startDate" type="date" />
+              </div>
+              <div class="form-group">
+                <label>Sprint</label>
+                <select v-model="localTaskForm.sprintId">
+                  <option :value="null">Aucun sprint</option>
+                  <option v-for="sprint in sprints" :key="`lt-sprint-${sprint.id}`" :value="sprint.id">
+                    {{ sprint.name }}
+                  </option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Temps estimé (heures)</label>
+                <input v-model.number="localTaskForm.estimatedTime" type="number" min="0" step="0.5" placeholder="Ex: 8" />
+              </div>
+              <div class="form-group">
                 <label>Assigné à</label>
                 <select v-model="localTaskForm.assignedUserId">
                   <option :value="null">Non assigné</option>
@@ -798,10 +831,6 @@
                       <option value="hard">Difficile</option>
                       <option value="expert">Expert</option>
                     </select>
-                  </div>
-                  <div class="form-group">
-                    <label>Temps estimé (heures)</label>
-                    <input v-model.number="localTaskForm.estimatedTime" type="number" min="0" step="0.5" placeholder="Ex: 8" />
                   </div>
                   <div v-if="project.tjm && localTaskForm.estimatedTime" class="form-group">
                     <label>Coût estimé</label>
@@ -864,6 +893,9 @@
                     <span class="badge" :class="getTicketStatusClass(task.status)">{{ getTicketStatusLabel(task.status) }}</span>
                     <span class="badge" :class="getPriorityClass(task.priority)">{{ getPriorityLabel(task.priority) }}</span>
                     <span class="badge badge-info">👤 {{ getUserDisplayName(task.assignedUserId) }}</span>
+                    <span v-if="task.sprintId" class="badge badge-info">🏃 {{ getSprintName(task.sprintId) }}</span>
+                    <span v-if="task.startDate" class="badge badge-info">📅 Début: {{ task.startDate }}</span>
+                    <span v-if="task.estimatedTime" class="badge badge-success">⏱️ {{ task.estimatedTime }}h</span>
                     <span v-if="task.isChiffrage" class="badge" style="background: #4DBA87; color: white;">💰 Chiffrage</span>
                   </div>
                   <!-- Infos de chiffrage -->
@@ -902,6 +934,56 @@
             <div class="ticket-meta">
               <small>Créé le {{ formatDate(task.createdAt) }}</small>
               <small v-if="task.timeTotalMinutes" class="time-tag">• Temps: {{ formatDuration(task.timeTotalMinutes) }}</small>
+            </div>
+          </div>
+        </template>
+
+        <template v-else-if="projectContentView === 'gantt'">
+          <div class="section-header">
+            <h3>🗓️ Pipeline hebdomadaire par utilisateur</h3>
+            <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
+              <label style="font-size: 0.9rem; color: #666;">Sprint</label>
+              <select v-model="selectedGanttSprintId" style="min-width: 220px;">
+                <option value="">Tous les sprints</option>
+                <option v-for="sprint in sprints" :key="`gantt-sprint-${sprint.id}`" :value="String(sprint.id)">
+                  {{ sprint.name }}
+                </option>
+              </select>
+              <button class="btn btn-secondary btn-sm" @click="prevGanttWeek">← Semaine -1</button>
+              <button class="btn btn-secondary btn-sm" @click="nextGanttWeek">Semaine +1 →</button>
+              <small style="color: #666;">{{ ganttWeekDays[0] }} → {{ ganttWeekDays[ganttWeekDays.length - 1] }}</small>
+            </div>
+          </div>
+
+          <div v-if="ganttUserRows.length === 0" style="text-align: center; color: #999; padding: 2rem;">
+            Aucun ticket assigné non terminé pour cette semaine.
+          </div>
+
+          <div v-else class="gantt-wrapper">
+            <div class="gantt-header">
+              <div class="gantt-user-col">Utilisateur</div>
+              <div class="gantt-timeline-col">
+                <div class="gantt-days-grid" :style="{ gridTemplateColumns: `repeat(${ganttWeekDays.length}, 1fr)` }">
+                  <div v-for="day in ganttWeekDays" :key="`gh-${day}`" class="gantt-day-label">{{ day.slice(5) }}</div>
+                </div>
+              </div>
+            </div>
+
+            <div v-for="row in ganttUserRows" :key="`gantt-user-${row.userId}`" class="gantt-row">
+              <div class="gantt-user-col">
+                <div class="gantt-task-title">{{ row.userName }}</div>
+                <small style="color: #666;">{{ row.items.length }} ticket(s)</small>
+              </div>
+              <div class="gantt-timeline-col" :style="{ minHeight: `${getGanttRowHeight(row)}px` }">
+                <div
+                  v-for="(item, itemIndex) in row.items"
+                  :key="`gantt-item-${row.userId}-${item.id}`"
+                  class="gantt-bar clickable"
+                  :style="getGanttBarStyle(item, itemIndex)"
+                  :title="`${item.title} (${item.estimatedTime}h)`"
+                  @click="viewTicket(item.id)"
+                ></div>
+              </div>
             </div>
           </div>
         </template>
@@ -1032,6 +1114,8 @@ export default {
       ticketStatusSyncMessage: null,
       taskTimeForm: {},
       projectContentView: 'tickets',
+      selectedGanttSprintId: '',
+      ganttWeekStart: '',
       searchQuery: '',
       tasksSearchQuery: '',
       showTicketForm: false,
@@ -1086,6 +1170,8 @@ export default {
         description: '',
         status: 'todo',
         priority: 'medium',
+        startDate: new Date().toISOString().split('T')[0],
+        estimatedTime: 0,
         assignedUserId: null,
         attachments: []
       },
@@ -1094,6 +1180,8 @@ export default {
         description: '',
         status: 'todo',
         priority: 'medium',
+        sprintId: null,
+        startDate: new Date().toISOString().split('T')[0],
         assignedUserId: null,
         isChiffrage: false,
         lotNumber: '',
@@ -1266,10 +1354,69 @@ export default {
         }
       })
       return types
+    },
+    ganttWeekDays() {
+      const start = this.ganttWeekStart || this.getWeekStart(new Date())
+      const days = []
+      for (let i = 0; i < 7; i++) {
+        days.push(this.addDaysToDateString(start, i))
+      }
+      return days
+    },
+    ganttTicketItems() {
+      const hoursPerDay = Number(this.project?.hoursPerDay || 8)
+      const selectedSprintId = Number(this.selectedGanttSprintId)
+      const hasSprintFilter = Number.isFinite(selectedSprintId) && selectedSprintId > 0
+      const weekStart = this.ganttWeekDays[0]
+      const weekEnd = this.ganttWeekDays[this.ganttWeekDays.length - 1]
+
+      return (this.tickets || [])
+        .filter(ticket => !hasSprintFilter || Number(ticket.sprintId) === selectedSprintId)
+        .filter(ticket => !!ticket.assignedUserId)
+        .filter(ticket => !this.isCompletedStatus(ticket.status))
+        .map(ticket => {
+          const ganttStartDate = ticket.startDate
+            ? this.toDateOnlyString(ticket.startDate)
+            : this.toDateOnlyString(ticket.createdAt || new Date().toISOString())
+          const estimatedHours = Number(ticket.estimatedTime || 1)
+          const ganttDurationDays = Math.max(1, Math.ceil(estimatedHours / (hoursPerDay > 0 ? hoursPerDay : 8)))
+          const ganttEndDate = this.addDaysToDateString(ganttStartDate, ganttDurationDays - 1)
+          return {
+            ...ticket,
+            estimatedTime: estimatedHours,
+            ganttStartDate,
+            ganttDurationDays,
+            ganttEndDate,
+            overlapsWeek: !(ganttEndDate < weekStart || ganttStartDate > weekEnd)
+          }
+        })
+        .filter(item => item.overlapsWeek)
+    },
+    ganttUserRows() {
+      const groups = new Map()
+      for (const item of this.ganttTicketItems) {
+        const userId = Number(item.assignedUserId)
+        if (!groups.has(userId)) {
+          groups.set(userId, {
+            userId,
+            userName: this.getUserDisplayName(userId),
+            items: []
+          })
+        }
+        groups.get(userId).items.push(item)
+      }
+
+      const rows = Array.from(groups.values())
+      rows.forEach(row => {
+        row.items.sort((a, b) => String(a.ganttStartDate).localeCompare(String(b.ganttStartDate)))
+      })
+
+      return rows.sort((a, b) => String(a.userName).localeCompare(String(b.userName)))
     }
   },
   async mounted() {
     this.currentUserId = auth.getSession()?.userId || null
+    this.ganttWeekStart = this.getWeekStart(new Date())
     await this.loadUsers()
     await this.loadProject()
     await this.loadSprints()
@@ -1286,6 +1433,78 @@ export default {
       if (!userId) return 'Non assigné'
       const user = this.users.find(u => u.id === userId)
       return user ? `${user.displayName} (${user.username})` : 'Utilisateur inconnu'
+    },
+    getSprintName(sprintId) {
+      if (!sprintId) return 'Sprint inconnu'
+      const sprint = this.sprints.find(s => Number(s.id) === Number(sprintId))
+      return sprint?.name || 'Sprint inconnu'
+    },
+    toDateOnlyString(date) {
+      if (!date) return ''
+      const d = new Date(date)
+      if (Number.isNaN(d.getTime())) return String(date)
+      const year = d.getFullYear()
+      const month = String(d.getMonth() + 1).padStart(2, '0')
+      const day = String(d.getDate()).padStart(2, '0')
+      return `${year}-${month}-${day}`
+    },
+    addDaysToDateString(dateStr, daysToAdd) {
+      const source = this.toDateOnlyString(dateStr)
+      const [y, m, d] = source.split('-').map(Number)
+      const date = new Date(y, (m || 1) - 1, d || 1)
+      date.setDate(date.getDate() + Number(daysToAdd || 0))
+      const year = date.getFullYear()
+      const month = String(date.getMonth() + 1).padStart(2, '0')
+      const day = String(date.getDate()).padStart(2, '0')
+      return `${year}-${month}-${day}`
+    },
+    getWeekStart(dateInput) {
+      const date = new Date(dateInput || new Date())
+      const day = date.getDay() || 7
+      if (day !== 1) date.setDate(date.getDate() - (day - 1))
+      return this.toDateOnlyString(date)
+    },
+    prevGanttWeek() {
+      const base = this.ganttWeekStart || this.getWeekStart(new Date())
+      this.ganttWeekStart = this.addDaysToDateString(base, -7)
+    },
+    nextGanttWeek() {
+      const base = this.ganttWeekStart || this.getWeekStart(new Date())
+      this.ganttWeekStart = this.addDaysToDateString(base, 7)
+    },
+    getPriorityColor(priority) {
+      if (priority === 'high') return '#dc3545'
+      if (priority === 'medium') return '#fd7e14'
+      return '#4DBA87'
+    },
+    getGanttRowHeight(row) {
+      const count = Math.max(1, Number(row?.items?.length || 1))
+      return Math.max(48, (count * 24) + 12)
+    },
+    getGanttBarStyle(task, itemIndex = 0) {
+      if (!task?.ganttStartDate || !this.ganttWeekDays.length) return {}
+
+      const total = this.ganttWeekDays.length
+      const weekStart = this.ganttWeekDays[0]
+      const weekEnd = this.ganttWeekDays[total - 1]
+      const clippedStart = task.ganttStartDate < weekStart ? weekStart : task.ganttStartDate
+      const clippedEnd = task.ganttEndDate > weekEnd ? weekEnd : task.ganttEndDate
+
+      const startIndex = this.ganttWeekDays.findIndex(day => day === clippedStart)
+      const endIndex = this.ganttWeekDays.findIndex(day => day === clippedEnd)
+      if (startIndex < 0 || endIndex < 0 || endIndex < startIndex) return {}
+
+      const duration = (endIndex - startIndex) + 1
+      const leftPct = (startIndex / total) * 100
+      const widthPct = (duration / total) * 100
+
+      return {
+        left: `${leftPct}%`,
+        width: `${Math.max(widthPct, 1.8)}%`,
+        top: `${8 + (Number(itemIndex) * 24)}px`,
+        transform: 'none',
+        background: this.getPriorityColor(task.priority)
+      }
     },
     isCompletedStatus(status) {
       if (!status) return false
@@ -1622,6 +1841,8 @@ export default {
         description: '',
         status: 'todo',
         priority: 'medium',
+        startDate: new Date().toISOString().split('T')[0],
+        estimatedTime: 0,
         assignedUserId: this.currentUserId,
         attachments: []
       }
@@ -2410,6 +2631,7 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
             description: task.description,
             status: task.status,
             priority: task.priority,
+            startDate: new Date().toISOString().split('T')[0],
             isChiffrage: task.isChiffrage,
             lotNumber: task.lotNumber,
             difficulty: task.difficulty,
@@ -2668,16 +2890,25 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
     // ===== LOCAL TASKS =====
     async loadLocalTasks() {
       const id = parseInt(this.$route.params.id)
-      this.localTasks = await db.getLocalTasksByProject(id)
+      const tasks = await db.getLocalTasksByProject(id)
+      this.localTasks = (tasks || []).map(task => ({
+        ...task,
+        startDate: task.startDate ? this.toDateOnlyString(task.startDate) : null
+      }))
     },
     async saveLocalTask() {
+      const payload = {
+        ...this.localTaskForm,
+        startDate: this.localTaskForm.startDate ? this.toDateOnlyString(this.localTaskForm.startDate) : null
+      }
+
       if (this.localTaskForm.id) {
         // Mise à jour d'une tâche existante
-        await db.updateLocalTask(this.localTaskForm.id, this.localTaskForm)
+        await db.updateLocalTask(this.localTaskForm.id, payload)
       } else {
         // Création d'une nouvelle tâche
         await db.addLocalTask({
-          ...this.localTaskForm,
+          ...payload,
           assignedUserId: this.localTaskForm.assignedUserId ?? this.currentUserId,
           projectId: this.project.id
         })
@@ -2686,19 +2917,25 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
       this.cancelLocalTaskForm()
     },
     openLocalTaskForm() {
+      const activeSprint = this.currentSprintForSelectedProject
       this.showLocalTaskForm = true
       this.localTaskForm = {
         ...this.localTaskForm,
+        sprintId: this.localTaskForm.sprintId ?? (activeSprint?.id || null),
+        startDate: this.localTaskForm.startDate || new Date().toISOString().split('T')[0],
         assignedUserId: this.localTaskForm.assignedUserId ?? this.currentUserId
       }
     },
     cancelLocalTaskForm() {
+      const activeSprint = this.currentSprintForSelectedProject
       this.showLocalTaskForm = false
       this.localTaskForm = {
         title: '',
         description: '',
         status: 'todo',
         priority: 'medium',
+        sprintId: activeSprint?.id || null,
+        startDate: new Date().toISOString().split('T')[0],
         assignedUserId: this.currentUserId,
         isChiffrage: false,
         lotNumber: '',
@@ -2710,6 +2947,7 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
     async editLocalTask(task) {
       this.localTaskForm = {
         ...task,
+        startDate: task.startDate || new Date().toISOString().split('T')[0],
         assignedUserId: task.assignedUserId ?? null
       }
       this.showLocalTaskForm = true
@@ -3413,5 +3651,96 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
   text-align: center;
   color: #999;
   padding: 1rem 0.5rem;
+}
+
+.gantt-wrapper {
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.gantt-header,
+.gantt-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.2fr) minmax(560px, 4fr);
+  align-items: center;
+}
+
+.gantt-header {
+  background: #f8f9fa;
+  border-bottom: 1px solid #e9ecef;
+  font-weight: 600;
+}
+
+.gantt-row {
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.gantt-row:last-child {
+  border-bottom: none;
+}
+
+.gantt-task-col,
+.gantt-user-col,
+.gantt-timeline-col {
+  padding: 0.75rem;
+}
+
+.gantt-task-title {
+  font-weight: 600;
+}
+
+.gantt-timeline-col {
+  position: relative;
+  min-height: 48px;
+  background-image: repeating-linear-gradient(
+    to right,
+    #f4f4f4 0,
+    #f4f4f4 1px,
+    transparent 1px,
+    transparent calc(100% / 30)
+  );
+}
+
+.gantt-days-grid {
+  display: grid;
+  gap: 0;
+}
+
+.gantt-day-label {
+  font-size: 0.75rem;
+  color: #666;
+  text-align: center;
+  padding: 0.2rem 0;
+  border-left: 1px solid #f0f0f0;
+}
+
+.gantt-day-label:first-child {
+  border-left: none;
+}
+
+.gantt-bar {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 22px;
+  border-radius: 999px;
+  opacity: 0.9;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.gantt-bar.clickable {
+  cursor: pointer;
+}
+
+@media (max-width: 1100px) {
+  .gantt-wrapper {
+    overflow-x: auto;
+  }
+
+  .gantt-header,
+  .gantt-row {
+    min-width: 980px;
+  }
 }
 </style>

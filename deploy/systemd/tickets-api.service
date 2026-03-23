@@ -1,0 +1,16 @@
+[Unit]
+Description=Tickets PWA API
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/tickets-app
+EnvironmentFile=/home/ubuntu/tickets-api.env
+ExecStart=/usr/bin/node server/index.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -11,6 +11,13 @@
       <div class="info-box" style="margin-bottom: 1rem;">
         <p><strong>Proxy local :</strong> l'application web ne peut pas démarrer un processus Node.js directement depuis le navigateur.</p>
         <p>Utilisez la commande unique <code>npm run dev:full</code> pour lancer le proxy et l'app ensemble.</p>
+        <template v-if="recommendedProxyUrl">
+          <p style="margin-top: 0.5rem;"><strong>Proxy recommandé (serveur) :</strong> <code>{{ recommendedProxyUrl }}</code></p>
+          <p style="color: #555;">En production, utilisez cette URL pour éviter les blocages CORS avec Odoo.</p>
+          <button type="button" class="btn btn-primary" @click="applyRecommendedProxyUrl">
+            ✅ Utiliser l'URL proxy recommandée
+          </button>
+        </template>
         <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.75rem;">
           <button type="button" class="btn btn-secondary" @click="copyProxyCommand">
             📋 Copier la commande
@@ -255,9 +262,17 @@
 <script>
 import { odooService } from '../services/odoo-new'
 import { db } from '../services/database-new'
+import { auth } from '../services/auth'
 
 export default {
   name: 'OdooSync',
+  computed: {
+    recommendedProxyUrl() {
+      if (!this.currentOrigin) return ''
+      if (this.currentOrigin.includes('localhost')) return ''
+      return `${this.currentOrigin}/odoo`
+    }
+  },
   data() {
     return {
       config: {
@@ -282,10 +297,24 @@ export default {
     }
   },
   mounted() {
+    // Recharger la config Odoo pour l'utilisateur courant
+    odooService.loadConfig()
     this.loadConfig()
+    if (!this.config.url && this.recommendedProxyUrl) {
+      this.config.url = this.recommendedProxyUrl
+    }
     this.loadLocalProjectsWithOdoo()
   },
   methods: {
+    applyRecommendedProxyUrl() {
+      if (!this.recommendedProxyUrl) return
+      this.config.url = this.recommendedProxyUrl
+      this.connectionStatus = {
+        type: 'success',
+        message: `✅ URL proxy appliquée: ${this.recommendedProxyUrl}`
+      }
+      setTimeout(() => this.connectionStatus = null, 3000)
+    },
     async loadLocalProjectsWithOdoo() {
       try {
         const allProjects = await db.getAllProjects()
@@ -381,8 +410,17 @@ export default {
         }
       }
     },
+    getStorageKey() {
+      try {
+        const session = auth.getSession()
+        if (session?.userId) {
+          return `odoo-config-${session.userId}`
+        }
+      } catch {}
+      return 'odoo-config'
+    },
     loadConfig() {
-      const saved = localStorage.getItem('odoo-config')
+      const saved = localStorage.getItem(this.getStorageKey())
       if (saved) {
         const parsed = JSON.parse(saved)
         this.config = { ...this.config, ...parsed }
@@ -392,6 +430,11 @@ export default {
         }
         this.isConfigured = true
         this.authMode = parsed.apiKey ? 'apikey' : 'password'
+      } else {
+        // Réinitialiser le formulaire si aucune config pour cet utilisateur
+        this.config = { url: '', db: '', apiKey: '', username: '', password: '', version: '18' }
+        this.authMode = 'apikey'
+        this.isConfigured = false
       }
     },
     saveConfig() {

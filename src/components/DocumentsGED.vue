@@ -182,6 +182,27 @@
           <div v-else-if="isPDF(previewDoc.attachment.type)" class="preview-pdf">
             <iframe :src="previewDoc.attachment.data" width="100%" height="600px"></iframe>
           </div>
+          <div v-else-if="isMarkdownDocument(previewDoc.attachment)" class="preview-markdown-wrapper">
+            <div class="preview-tabs">
+              <button
+                class="preview-tab"
+                :class="{ active: markdownPreviewMode === 'rendered' }"
+                @click="markdownPreviewMode = 'rendered'"
+              >
+                Aperçu
+              </button>
+              <button
+                class="preview-tab"
+                :class="{ active: markdownPreviewMode === 'source' }"
+                @click="markdownPreviewMode = 'source'"
+              >
+                Source
+              </button>
+            </div>
+
+            <div v-if="markdownPreviewMode === 'rendered'" class="preview-markdown" v-html="renderMarkdownAttachment(previewDoc.attachment)"></div>
+            <pre v-else class="preview-markdown-source">{{ extractAttachmentText(previewDoc.attachment) }}</pre>
+          </div>
           <div v-else class="preview-download">
             <div class="file-icon-large">{{ getFileIcon(previewDoc.attachment.type) }}</div>
             <p>{{ previewDoc.attachment.name }}</p>
@@ -209,6 +230,13 @@
 
 <script>
 import { db } from '../services/database-new'
+import MarkdownIt from 'markdown-it'
+
+const markdownParser = new MarkdownIt({
+  html: false,
+  linkify: true,
+  breaks: true
+})
 
 export default {
   name: 'DocumentsGED',
@@ -225,7 +253,8 @@ export default {
         fileType: 'all'
       },
       groupByProject: true,
-      previewDoc: null
+      previewDoc: null,
+      markdownPreviewMode: 'rendered'
     }
   },
   computed: {
@@ -349,9 +378,11 @@ export default {
     },
     previewDocument(doc) {
       this.previewDoc = doc
+      this.markdownPreviewMode = 'rendered'
     },
     closePreview() {
       this.previewDoc = null
+      this.markdownPreviewMode = 'rendered'
     },
     async deleteDocument(doc) {
       if (!confirm(`Supprimer le fichier "${doc.attachment.name}" ?`)) return
@@ -397,6 +428,41 @@ export default {
     },
     isPDF(type) {
       return type === 'application/pdf'
+    },
+    isMarkdownDocument(attachment) {
+      if (!attachment) return false
+      const type = String(attachment.type || '').toLowerCase()
+      const name = String(attachment.name || '').toLowerCase()
+      return (
+        type === 'text/markdown' ||
+        type === 'text/x-markdown' ||
+        name.endsWith('.md') ||
+        name.endsWith('.markdown') ||
+        name.endsWith('.mdown')
+      )
+    },
+    extractAttachmentText(attachment) {
+      const rawData = String(attachment?.data || '')
+      if (!rawData) return ''
+
+      const [, payload = rawData] = rawData.split(',', 2)
+
+      try {
+        const decoded = atob(payload)
+        const bytes = Uint8Array.from(decoded, char => char.charCodeAt(0))
+        return new TextDecoder('utf-8').decode(bytes)
+      } catch (error) {
+        console.error('Erreur décodage pièce jointe texte:', error)
+        return ''
+      }
+    },
+    renderMarkdownAttachment(attachment) {
+      const source = this.extractAttachmentText(attachment)
+      if (!source.trim()) {
+        return '<p><em>Document Markdown vide.</em></p>'
+      }
+
+      return markdownParser.render(source)
     },
     getFileIcon(type) {
       if (type.startsWith('image/')) return '🖼️'
@@ -833,6 +899,88 @@ export default {
 .preview-pdf iframe {
   border: none;
   border-radius: 8px;
+}
+
+.preview-markdown-wrapper {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.preview-tabs {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem 0.75rem 0;
+  background: #f8fafc;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.preview-tab {
+  border: none;
+  background: transparent;
+  color: #475569;
+  font-weight: 600;
+  padding: 0.55rem 0.9rem;
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+}
+
+.preview-tab.active {
+  background: white;
+  color: #1f2937;
+  border: 1px solid #e5e7eb;
+  border-bottom-color: white;
+  margin-bottom: -1px;
+}
+
+.preview-markdown,
+.preview-markdown-source {
+  padding: 1rem 1.25rem;
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.preview-markdown-source {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.9rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  background: white;
+}
+
+.preview-markdown :deep(h1),
+.preview-markdown :deep(h2),
+.preview-markdown :deep(h3) {
+  margin-top: 0;
+  color: #1f2937;
+}
+
+.preview-markdown :deep(p),
+.preview-markdown :deep(li) {
+  line-height: 1.6;
+  color: #374151;
+}
+
+.preview-markdown :deep(pre),
+.preview-markdown :deep(code) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+
+.preview-markdown :deep(pre) {
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 0.9rem;
+  border-radius: 8px;
+  overflow: auto;
+}
+
+.preview-markdown :deep(blockquote) {
+  margin: 0;
+  padding-left: 1rem;
+  border-left: 4px solid #cbd5e1;
+  color: #475569;
 }
 
 .preview-download {

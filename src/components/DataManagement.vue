@@ -75,6 +75,18 @@
 
     <div class="card mt-4">
       <div class="card-body">
+        <h5 class="card-title">🗄️ Mode de stockage</h5>
+        <p class="card-text mb-2">
+          {{ storageDescription }}
+        </p>
+        <p class="small text-muted">
+          ✅ Mode actuel : <strong>{{ storageModeLabel }}</strong>
+        </p>
+      </div>
+    </div>
+
+    <div class="card mt-4">
+      <div class="card-body">
         <h5 class="card-title">ℹ️ Informations</h5>
         <ul>
           <li><strong>Format :</strong> Fichier JSON avec toutes vos données</li>
@@ -82,6 +94,7 @@
           <li><strong>Remplacement :</strong> Supprime tout et restaure depuis la sauvegarde</li>
           <li><strong>⚠️ Attention :</strong> En mode "Remplacer", toutes vos données actuelles seront perdues</li>
           <li><strong>Odoo :</strong> Les liens avec Odoo (odooId) sont préservés</li>
+          <li><strong>Stockage :</strong> {{ storageDetails }}</li>
         </ul>
       </div>
     </div>
@@ -95,11 +108,30 @@ import { db } from '../services/database-new';
 export default {
   name: 'DataManagement',
   setup() {
+    const dbMode = String(import.meta.env.VITE_DB_MODE || 'local').toLowerCase();
     const fileInput = ref(null);
     const selectedFile = ref(null);
     const importMode = ref('merge');
     const statusMessage = ref('');
     const statusClass = ref('');
+
+    const storageModeLabel = dbMode === 'remote'
+      ? 'PostgreSQL distant'
+      : dbMode === 'hybrid'
+        ? 'Hybride (IndexedDB navigateur + synchro API)'
+        : 'IndexedDB locale';
+
+    const storageDescription = dbMode === 'remote'
+      ? 'L\'application fonctionne en mode PostgreSQL distant. Les données affichées proviennent directement de la base serveur via l\'API.'
+      : dbMode === 'hybrid'
+        ? 'L\'application fonctionne en mode hybride. Les données utilisées au quotidien sont d\'abord stockées dans votre navigateur, avec synchronisation possible via l\'API.'
+        : 'L\'application fonctionne en mode local. Les données sont stockées uniquement dans l\'IndexedDB du navigateur.';
+
+    const storageDetails = dbMode === 'remote'
+      ? 'Mode PostgreSQL distant — les données sont lues et écrites directement en base serveur.'
+      : dbMode === 'hybrid'
+        ? 'Mode hybride — l\'IndexedDB du navigateur reste la source locale, avec synchronisation manuelle via l\'API.'
+        : 'Mode local — les données sont stockées uniquement dans le navigateur courant.';
 
     const exportData = async () => {
       try {
@@ -183,15 +215,27 @@ export default {
       }
     };
 
+    const formatDate = (value) => {
+      try {
+        return new Date(value).toLocaleString('fr-FR');
+      } catch {
+        return value;
+      }
+    };
+
     return {
       fileInput,
       selectedFile,
       importMode,
       statusMessage,
       statusClass,
+      storageModeLabel,
+      storageDescription,
+      storageDetails,
       exportData,
       handleFileSelect,
-      importData
+      importData,
+      formatDate
     };
   }
 };
@@ -209,6 +253,10 @@ export default {
 
 .form-check {
   padding: 0.5rem 0;
+}
+
+.gap-2 {
+  gap: 0.5rem;
 }
 
 .alert {
