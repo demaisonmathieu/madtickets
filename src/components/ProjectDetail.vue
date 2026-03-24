@@ -22,6 +22,25 @@
         <h3>Détails du projet</h3>
         <div v-if="project.description" v-html="project.description"></div>
         <p v-else style="color: #999;">Aucune description</p>
+
+        <div class="project-extra-info" style="margin-top: 1rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0.75rem;">
+          <div class="info-item" v-if="project.clientName">
+            <strong>Client :</strong>
+            <span>{{ project.clientName }}</span>
+          </div>
+          <div class="info-item" v-if="project.clientEmail">
+            <strong>Email client :</strong>
+            <a :href="`mailto:${project.clientEmail}`">{{ project.clientEmail }}</a>
+          </div>
+          <div class="info-item" v-if="project.prodUrl">
+            <strong>URL Production :</strong>
+            <a :href="project.prodUrl" target="_blank" rel="noopener noreferrer">{{ project.prodUrl }}</a>
+          </div>
+          <div class="info-item" v-if="project.preprodUrl">
+            <strong>URL Préproduction :</strong>
+            <a :href="project.preprodUrl" target="_blank" rel="noopener noreferrer">{{ project.preprodUrl }}</a>
+          </div>
+        </div>
         
         <div style="margin-top: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
           <button @click="$router.push(`/projects/${project.id}/sprints`)" class="btn btn-primary">🏃 Gérer les Sprints</button>

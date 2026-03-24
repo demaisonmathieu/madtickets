@@ -412,6 +412,13 @@
                 <strong>User stories terminées :</strong>
                 <span>{{ recetteCoverage.storiesDone }} / {{ recetteCoverage.storiesTotal }}</span>
               </div>
+              <div class="info-item" v-if="project?.preprodUrl || project?.prodUrl">
+                <strong>Environnements :</strong>
+                <span style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.25rem;">
+                  <a v-if="project?.preprodUrl" :href="project.preprodUrl" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">🔗 Préprod</a>
+                  <a v-if="project?.prodUrl" :href="project.prodUrl" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">🔗 Prod</a>
+                </span>
+              </div>
             </div>
 
             <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.75rem;">
@@ -637,6 +644,9 @@
                   type="text"
                   placeholder="client@exemple.com (plusieurs: séparés par , ; ou espace)"
                 />
+                <small v-if="project?.clientEmail" style="color:#666; display:block; margin-top:0.35rem;">
+                  Email client projet: {{ project.clientEmail }}
+                </small>
               </div>
               <div class="form-group">
                 <label>Copie (CC)</label>
@@ -1051,9 +1061,15 @@ export default {
           this.emailForm.subject = `[Ticket #${this.ticket.id}] ${this.ticket.title}`
         }
 
+        if (!this.emailForm.to && this.project?.clientEmail) {
+          this.emailForm.to = this.project.clientEmail
+        }
+
         if (!this.emailForm.body) {
           this.emailForm.body = `Bonjour,\n\nConcernant le ticket "${this.ticket.title}" du projet "${this.project?.name || ''}",\n\n` +
-            `Merci de votre retour.\n\nCordialement,`
+            `${this.project?.preprodUrl ? `Préproduction: ${this.project.preprodUrl}\n` : ''}` +
+            `${this.project?.prodUrl ? `Production: ${this.project.prodUrl}\n` : ''}` +
+            `\nMerci de votre retour.\n\nCordialement,`
         }
       }
     },

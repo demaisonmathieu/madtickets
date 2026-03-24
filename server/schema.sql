@@ -17,6 +17,10 @@ CREATE TABLE IF NOT EXISTS projects (
   id BIGSERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   description TEXT,
+  client_name TEXT,
+  client_email TEXT,
+  prod_url TEXT,
+  preprod_url TEXT,
   status TEXT,
   assigned_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
   is_favorite BOOLEAN NOT NULL DEFAULT FALSE,
@@ -118,6 +122,10 @@ CREATE TABLE IF NOT EXISTS local_tasks (
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS gantt_assignments JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE local_tasks ADD COLUMN IF NOT EXISTS gantt_assignments JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS use_default_kanban_template BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS client_name TEXT;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS client_email TEXT;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS prod_url TEXT;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS preprod_url TEXT;
 
 CREATE TABLE IF NOT EXISTS odoo_tasks (
   id BIGSERIAL PRIMARY KEY,

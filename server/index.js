@@ -18,6 +18,10 @@ const projectFields = {
   id: 'id',
   name: 'name',
   description: 'description',
+  clientName: 'client_name',
+  clientEmail: 'client_email',
+  prodUrl: 'prod_url',
+  preprodUrl: 'preprod_url',
   status: 'status',
   assignedUserId: 'assigned_user_id',
   isFavorite: 'is_favorite',
@@ -274,6 +278,10 @@ function mapProject(row) {
     id: Number(row.id),
     name: row.name,
     description: row.description,
+    clientName: row.client_name || '',
+    clientEmail: row.client_email || '',
+    prodUrl: row.prod_url || '',
+    preprodUrl: row.preprod_url || '',
     status: row.status,
     assignedUserId: row.assigned_user_id ? Number(row.assigned_user_id) : null,
     isFavorite: row.is_favorite,
@@ -620,6 +628,8 @@ async function getPublicRecetteByToken(token) {
       id: project.id,
       name: project.name,
       description: project.description,
+      preprodUrl: project.preprodUrl || '',
+      prodUrl: project.prodUrl || '',
     },
     tickets: result.rows.map(mapTicket),
   }
@@ -1470,6 +1480,23 @@ app.use((error, _req, res, _next) => {
   res.status(error.status || 500).json({ error: error.message || 'Internal server error' })
 })
 
-app.listen(port, () => {
-  console.log(`✅ PostgreSQL API listening on http://localhost:${port}`)
-})
+async function ensureProjectExtraColumns() {
+  await query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS client_name TEXT`)
+  await query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS client_email TEXT`)
+  await query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS prod_url TEXT`)
+  await query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS preprod_url TEXT`)
+}
+
+async function startServer() {
+  try {
+    await ensureProjectExtraColumns()
+    app.listen(port, () => {
+      console.log(`✅ PostgreSQL API listening on http://localhost:${port}`)
+    })
+  } catch (error) {
+    console.error('❌ Impossible de démarrer l\'API:', error)
+    process.exit(1)
+  }
+}
+
+startServer()

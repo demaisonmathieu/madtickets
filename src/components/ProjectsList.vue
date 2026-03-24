@@ -43,6 +43,22 @@
           <RichTextEditor v-model="form.description" placeholder="Description du projet..." />
         </div>
         <div class="form-group">
+          <label>Nom du client</label>
+          <input v-model="form.clientName" placeholder="Ex: ACME Corp" />
+        </div>
+        <div class="form-group">
+          <label>Email client</label>
+          <input v-model="form.clientEmail" type="email" placeholder="contact@client.com" />
+        </div>
+        <div class="form-group">
+          <label>URL Production</label>
+          <input v-model="form.prodUrl" type="url" placeholder="https://app.client.com" />
+        </div>
+        <div class="form-group">
+          <label>URL Préproduction</label>
+          <input v-model="form.preprodUrl" type="url" placeholder="https://preprod.client.com" />
+        </div>
+        <div class="form-group">
           <label>Statut</label>
           <select v-model="form.status">
             <option value="active">Actif</option>
@@ -159,6 +175,10 @@ export default {
       form: {
         name: '',
         description: '',
+        clientName: '',
+        clientEmail: '',
+        prodUrl: '',
+        preprodUrl: '',
         status: 'active',
         assignedUserId: null,
         useDefaultKanbanTemplate: true,
@@ -237,6 +257,10 @@ export default {
       this.form = {
         name: project.name,
         description: project.description || '',
+        clientName: project.clientName || '',
+        clientEmail: project.clientEmail || '',
+        prodUrl: project.prodUrl || '',
+        preprodUrl: project.preprodUrl || '',
         status: project.status,
         assignedUserId: project.assignedUserId ?? null,
         useDefaultKanbanTemplate: project.useDefaultKanbanTemplate !== false,
@@ -250,6 +274,10 @@ export default {
       this.form = {
         name: '',
         description: '',
+        clientName: '',
+        clientEmail: '',
+        prodUrl: '',
+        preprodUrl: '',
         status: 'active',
         assignedUserId: this.currentUserId,
         useDefaultKanbanTemplate: true,

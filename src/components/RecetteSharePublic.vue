@@ -16,6 +16,10 @@
       <div class="recette-header">
         <h1>🧪 Recette - {{ project.name }}</h1>
         <p v-if="project.description" class="project-desc">{{ project.description }}</p>
+        <div v-if="project.preprodUrl || project.prodUrl" style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.75rem;">
+          <a v-if="project.preprodUrl" :href="project.preprodUrl" target="_blank" rel="noopener noreferrer" class="btn-recette btn-recette-secondary">🔗 Préproduction</a>
+          <a v-if="project.prodUrl" :href="project.prodUrl" target="_blank" rel="noopener noreferrer" class="btn-recette btn-recette-secondary">🔗 Production</a>
+        </div>
       </div>
 
       <div v-if="recetteTickets.length === 0" class="empty-state">

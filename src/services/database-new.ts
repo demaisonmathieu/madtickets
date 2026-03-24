@@ -27,6 +27,10 @@ export interface Project {
   id?: number;
   name: string;
   description?: string;
+  clientName?: string;
+  clientEmail?: string;
+  prodUrl?: string;
+  preprodUrl?: string;
   status?: string;
   assignedUserId?: number | null;
   followerUserIds?: number[];
