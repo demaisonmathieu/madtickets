@@ -311,23 +311,9 @@ class DatabaseService {
     const normalizedProject = this.normalizeProject(project);
     if (!normalizedProject) return false;
 
-    if (REMOTE_DB_ENABLED) {
-      return true;
-    }
-
-    const session = this.getCurrentSession();
-    if (session?.role === 'admin') return true;
-
-    const currentUserId = Number(session?.userId);
-    if (!Number.isFinite(currentUserId) || currentUserId <= 0) return false;
-
-    const followers = normalizedProject.followerUserIds || [];
-    if (followers.length === 0) {
-      // Fallback: projet sans followers explicites => accessible aux utilisateurs connectés
-      return true;
-    }
-
-    return followers.includes(currentUserId);
+    // Le backend est la source de vérité pour l'accès.
+    // Éviter le filtrage côté frontend pour ne pas masquer les données.
+    return true;
   }
 
   protected filterProjectsForCurrentUser(projects: Project[]): Project[] {
@@ -335,29 +321,8 @@ class DatabaseService {
       .map(project => this.normalizeProject(project))
       .filter((project): project is Project => Boolean(project));
 
-    if (REMOTE_DB_ENABLED) {
-      return normalizedProjects;
-    }
-
-    const session = this.getCurrentSession();
-    if (session?.role === 'admin') {
-      return normalizedProjects;
-    }
-
-    const currentUserId = Number(session?.userId);
-    if (!Number.isFinite(currentUserId) || currentUserId <= 0) {
-      return [];
-    }
-
-    return normalizedProjects.filter(project => {
-      const followers = project.followerUserIds || [];
-      if (followers.length === 0) {
-        // Fallback: ne pas masquer les projets historiques sans followers configurés
-        return true;
-      }
-
-      return followers.includes(currentUserId);
-    });
+    // Éviter tout filtrage client qui peut provoquer des listes vides.
+    return normalizedProjects;
   }
 
   protected ensureAccessibleProject(project?: Project | null): Project {
