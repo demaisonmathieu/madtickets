@@ -2,7 +2,7 @@
   <div>
     <div class="page-header">
       <h2>Mes Projets</h2>
-      <div style="display: flex; gap: 1rem;">
+      <div class="header-actions">
         <button v-if="selectedProjects.length > 0" @click="deleteSelectedConfirm" class="btn btn-danger">🗑️ Supprimer ({{ selectedProjects.length }})</button>
         <button v-if="selectMode" @click="selectAll" class="btn btn-secondary">{{ allSelected ? '☐ Tout désélectionner' : '☑️ Tout sélectionner' }}</button>
         <button @click="toggleSelectMode" class="btn btn-secondary" v-if="sortedProjects.length > 0">{{ selectMode ? 'Annuler sélection' : '☑️ Sélectionner' }}</button>
@@ -99,12 +99,18 @@
     </div>
 
     <div class="projects-grid">
-      <div v-for="project in filteredProjects" :key="project.id" class="card project-card" :class="{ 'selected': isSelected(project.id), 'favorite': project.isFavorite }">
+      <div
+        v-for="project in filteredProjects"
+        :key="project.id"
+        class="card project-card"
+        :class="{ 'selected': isSelected(project.id), 'favorite': project.isFavorite }"
+        @click="handleProjectCardClick(project.id)"
+      >
         <!-- Header avec checkbox, favori et titre -->
         <div class="project-header">
           <div class="header-left">
-            <input v-if="selectMode" type="checkbox" :checked="isSelected(project.id)" @change="toggleSelection(project.id)" class="select-checkbox" />
-            <button @click="toggleFavorite(project.id)" class="btn-favorite" :class="{ active: project.isFavorite }" title="Ajouter aux favoris">
+            <input v-if="selectMode" type="checkbox" :checked="isSelected(project.id)" @change="toggleSelection(project.id)" @click.stop class="select-checkbox" />
+            <button @click.stop="toggleFavorite(project.id)" class="btn-favorite" :class="{ active: project.isFavorite }" title="Ajouter aux favoris">
               {{ project.isFavorite ? '⭐' : '☆' }}
             </button>
             <div class="header-info">
@@ -119,9 +125,9 @@
         <div class="project-footer">
           <small class="project-date">Créé le {{ formatDate(project.createdAt) }}</small>
           <div class="project-actions">
-            <button @click="editProject(project)" class="btn btn-secondary btn-sm">✏️</button>
-            <button @click="viewProject(project.id)" class="btn btn-primary btn-sm">👁️</button>
-            <button @click="deleteProjectConfirm(project)" class="btn btn-danger btn-sm">🗑️</button>
+            <button @click.stop="editProject(project)" class="btn btn-secondary btn-sm">✏️</button>
+            <button @click.stop="viewProject(project.id)" class="btn btn-primary btn-sm">👁️</button>
+            <button @click.stop="deleteProjectConfirm(project)" class="btn btn-danger btn-sm">🗑️</button>
           </div>
         </div>
       </div>
@@ -362,6 +368,13 @@ export default {
         await this.loadProjects()
       }
     },
+    handleProjectCardClick(projectId) {
+      if (this.selectMode) {
+        this.toggleSelection(projectId)
+        return
+      }
+      this.viewProject(projectId)
+    },
     viewProject(id) {
       this.$router.push(`/projects/${id}`)
     },
@@ -394,6 +407,14 @@ export default {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 2rem;
+  gap: 1rem;
+}
+
+.header-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .projects-grid {
@@ -409,6 +430,7 @@ export default {
   display: flex;
   flex-direction: column;
   position: relative;
+  cursor: pointer;
 }
 
 .project-card:hover {
@@ -583,6 +605,8 @@ export default {
 .project-actions {
   display: flex;
   gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .project-actions .btn-sm {
@@ -606,6 +630,28 @@ export default {
     flex-direction: column;
     gap: 1rem;
     align-items: stretch;
+  }
+
+  .header-actions {
+    justify-content: stretch;
+  }
+
+  .header-actions .btn {
+    width: 100%;
+  }
+
+  .project-footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .project-actions {
+    width: 100%;
+  }
+
+  .project-actions .btn-sm {
+    flex: 1;
   }
 }
 </style>

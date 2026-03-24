@@ -34,12 +34,12 @@
     </div>
 
     <div class="sprints-grid">
-      <div v-for="sprint in filteredSprints" :key="sprint.id" class="card sprint-card">
+      <div v-for="sprint in filteredSprints" :key="sprint.id" class="card sprint-card" @click="viewSprint(sprint)">
         <div class="sprint-header">
           <div>
             <h3>{{ sprint.name }}</h3>
             <span class="badge" :class="getStatusClass(sprint.status)">{{ getStatusLabel(sprint.status) }}</span>
-            <p class="project-name clickable-project-name" @click="viewProject(sprint.projectId)">📁 {{ getProjectName(sprint.projectId) }}</p>
+            <p class="project-name clickable-project-name" @click.stop="viewProject(sprint.projectId)">📁 {{ getProjectName(sprint.projectId) }}</p>
           </div>
         </div>
 
@@ -56,7 +56,7 @@
         </div>
 
         <div class="sprint-actions">
-          <router-link :to="`/projects/${sprint.projectId}/sprints?sprintId=${sprint.id}`" class="btn btn-primary btn-sm">
+          <router-link :to="`/projects/${sprint.projectId}/sprints?sprintId=${sprint.id}`" class="btn btn-primary btn-sm" @click.stop>
             📋 Ouvrir
           </router-link>
         </div>
@@ -110,6 +110,9 @@ export default {
     },
     viewProject(projectId) {
       this.$router.push(`/projects/${projectId}`)
+    },
+    viewSprint(sprint) {
+      this.$router.push(`/projects/${sprint.projectId}/sprints?sprintId=${sprint.id}`)
     },
     getSprintTicketsCount(sprintId) {
       return this.tickets.filter(t => t.sprintId === sprintId).length
@@ -168,6 +171,7 @@ export default {
   flex-direction: column;
   gap: 1rem;
   transition: all 0.2s;
+  cursor: pointer;
 }
 
 .sprint-card:hover {
@@ -232,6 +236,20 @@ export default {
 @media (max-width: 768px) {
   .sprints-grid {
     grid-template-columns: 1fr;
+  }
+
+  .page-header {
+    margin-bottom: 1rem;
+  }
+
+  .sprint-dates,
+  .sprint-stats,
+  .sprint-actions {
+    flex-wrap: wrap;
+  }
+
+  .sprint-actions .btn {
+    width: 100%;
   }
 }
 </style>

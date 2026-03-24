@@ -2,8 +2,8 @@
   <div>
     <div class="page-header">
       <h2>Tous les Tickets</h2>
-      <div style="display: flex; gap: 1rem; align-items: center;">
-        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; background: white; padding: 0.5rem 1rem; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+      <div class="header-actions">
+        <label class="favorite-filter-chip">
           <input type="checkbox" v-model="filterOnlyFavorites" style="width: auto;" />
           <span>⭐ Favoris uniquement</span>
         </label>
@@ -160,11 +160,17 @@
       <p style="text-align: center; color: #999;">{{ searchQuery ? 'Aucun ticket ne correspond à votre recherche.' : 'Aucun ticket trouvé.' }}</p>
     </div>
 
-    <div v-for="ticket in filteredTickets" :key="ticket.id" class="card ticket-card" :class="{ 'selected': isSelected(ticket.id) }">
+    <div
+      v-for="ticket in filteredTickets"
+      :key="ticket.id"
+      class="card ticket-card"
+      :class="{ 'selected': isSelected(ticket.id) }"
+      @click="handleTicketCardClick(ticket.id)"
+    >
       <div class="ticket-header">
         <div style="display: flex; align-items: start; gap: 1rem; flex: 1;">
-          <input v-if="selectMode" type="checkbox" :checked="isSelected(ticket.id)" @change="toggleSelection(ticket.id)" class="select-checkbox" />
-          <div style="flex: 1; cursor: pointer;" @click="viewTicket(ticket.id)">
+          <input v-if="selectMode" type="checkbox" :checked="isSelected(ticket.id)" @change="toggleSelection(ticket.id)" @click.stop class="select-checkbox" />
+          <div style="flex: 1; cursor: pointer;">
             <h3>{{ ticket.title }}</h3>
             <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap;">
               <span class="badge" :class="getStatusClass(ticket.status)">{{ getStatusLabel(ticket.status) }}</span>
@@ -182,21 +188,21 @@
           </div>
         </div>
         <div class="ticket-actions">
-          <button @click="viewTicket(ticket.id)" class="btn btn-primary btn-sm">👁️ Voir</button>
-          <button @click="viewProject(ticket.projectId)" class="btn btn-secondary btn-sm">Voir le projet</button>
+          <button @click.stop="viewTicket(ticket.id)" class="btn btn-primary btn-sm">👁️ Voir</button>
+          <button @click.stop="viewProject(ticket.projectId)" class="btn btn-secondary btn-sm">Voir le projet</button>
           <button
             v-if="canSyncTicketToOdoo(ticket)"
-            @click="syncTicketToOdoo(ticket)"
+            @click.stop="syncTicketToOdoo(ticket)"
             class="btn btn-secondary btn-sm"
           >
             🔄 Sync Odoo
           </button>
-          <button @click="setTicketRecetteStatus(ticket, 'validated')" class="btn btn-secondary btn-sm">✅ Recette OK</button>
-          <button @click="setTicketRecetteStatus(ticket, 'rejected')" class="btn btn-secondary btn-sm">❌ Recette KO</button>
-          <button @click="deleteTicketConfirm(ticket)" class="btn btn-danger btn-sm">🗑️ Supprimer</button>
+          <button @click.stop="setTicketRecetteStatus(ticket, 'validated')" class="btn btn-secondary btn-sm">✅ Recette OK</button>
+          <button @click.stop="setTicketRecetteStatus(ticket, 'rejected')" class="btn btn-secondary btn-sm">❌ Recette KO</button>
+          <button @click.stop="deleteTicketConfirm(ticket)" class="btn btn-danger btn-sm">🗑️ Supprimer</button>
         </div>
       </div>
-      <div v-if="ticket.description" class="ticket-description" v-html="truncateHtml(ticket.description)" @click="viewTicket(ticket.id)" style="cursor: pointer;"></div>
+      <div v-if="ticket.description" class="ticket-description" v-html="truncateHtml(ticket.description)" style="cursor: pointer;"></div>
       <div class="ticket-meta">
         <small>Créé le {{ formatDate(ticket.createdAt) }}</small>
       </div>
@@ -432,6 +438,13 @@ export default {
     viewTicket(ticketId) {
       this.$router.push(`/tickets/${ticketId}`)
     },
+    handleTicketCardClick(ticketId) {
+      if (this.selectMode) {
+        this.toggleSelection(ticketId)
+        return
+      }
+      this.viewTicket(ticketId)
+    },
     viewProject(projectId) {
       this.$router.push(`/projects/${projectId}`)
     },
@@ -590,6 +603,24 @@ export default {
   margin-bottom: 2rem;
 }
 
+.header-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.favorite-filter-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  background: white;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
 .filters {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -641,6 +672,7 @@ export default {
 
 .ticket-card {
   transition: transform 0.2s;
+  cursor: pointer;
 }
 
 .ticket-card:hover {
@@ -674,6 +706,8 @@ export default {
 .ticket-actions {
   display: flex;
   gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .btn-sm {
@@ -695,5 +729,41 @@ export default {
 
 .clickable-badge {
   cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  .page-header {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .header-actions {
+    align-items: stretch;
+  }
+
+  .header-actions > * {
+    width: 100%;
+  }
+
+  .ticket-header {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .ticket-actions {
+    width: 100%;
+  }
+
+  .ticket-actions .btn {
+    flex: 1 1 calc(50% - 0.5rem);
+  }
+}
+
+@media (max-width: 520px) {
+  .ticket-actions .btn {
+    flex-basis: 100%;
+  }
 }
 </style>
