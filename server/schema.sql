@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS projects (
   chiffrage_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   tjm NUMERIC(10,2),
   hours_per_day NUMERIC(5,2),
+  recette_share_token TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
