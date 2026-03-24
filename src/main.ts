@@ -28,6 +28,7 @@ import UsersManagement from './components/UsersManagement.vue'
 import MenuConfiguration from './components/MenuConfiguration.vue'
 import KanbanStagesConfig from './components/KanbanStagesConfig.vue'
 import LocalTaskDetail from './components/LocalTaskDetail.vue'
+import RecetteSharePublic from './components/RecetteSharePublic.vue'
 import { auth } from './services/auth'
 
 // Enregistrement du Service Worker désactivé en dev
@@ -51,6 +52,7 @@ import { auth } from './services/auth'
 // Configuration du routeur
 const routes: RouteRecordRaw[] = [
   { path: '/login', component: Login, meta: { public: true } },
+  { path: '/recette-share/:token', component: RecetteSharePublic, meta: { public: true } },
   { path: '/', redirect: '/dashboard' },
   { path: '/dashboard', component: Dashboard },
   { path: '/gantt-users', component: UserGanttView },

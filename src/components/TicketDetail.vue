@@ -395,9 +395,12 @@
         <div class="detail-section">
           <h3>🧪 Recette (évolution / bug)</h3>
           <div class="card" style="background: #f8f9fa; border: 1px solid #e0e0e0;">
-            <div style="display: flex; justify-content: flex-end; margin-bottom: 0.75rem;">
+            <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-bottom: 0.75rem; flex-wrap: wrap;">
               <button type="button" class="btn btn-secondary btn-sm" @click="exportRecetteToXls">
                 📊 Exporter le cahier de recette (.xls)
+              </button>
+              <button v-if="ticket.recetteStatus && ticket.recetteStatus !== 'pending'" type="button" class="btn btn-primary btn-sm" @click="shareRecette" title="Générer un lien de partage publique pour cette recette">
+                📤 Partager la recette
               </button>
             </div>
             <div class="info-grid" style="margin-bottom: 0.75rem;">
@@ -1248,6 +1251,41 @@ export default {
         .slice(0, 80)
 
       XLSX.writeFile(workbook, `cahier-recette-${safeTitle}.xls`, { bookType: 'xls' })
+    },
+    async shareRecette() {
+      try {
+        const project = this.project
+        if (!project) {
+          alert('Erreur : projet non trouvé')
+          return
+        }
+
+        // Générer un token si nécessaire
+        let token = project.recetteShareToken
+        if (!token) {
+          token = this.generateUUID()
+          project.recetteShareToken = token
+          await db.updateProject(project.id, { recetteShareToken: token })
+        }
+
+        // Créer le lien de partage
+        const origin = window.location.origin
+        const shareUrl = `${origin}/recette-share/${token}`
+
+        // Copier dans le presse-papiers
+        await navigator.clipboard.writeText(shareUrl)
+        alert('✅ Lien de partage copié dans le presse-papiers !\n\n' + shareUrl)
+      } catch (err) {
+        console.error('Erreur partage recette:', err)
+        alert('❌ Erreur lors de la génération du lien : ' + err.message)
+      }
+    },
+    generateUUID() {
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = (Math.random() * 16) | 0
+        const v = c === 'x' ? r : (r & 0x3) | 0x8
+        return v.toString(16)
+      })
     },
     setRecetteStatus(status) {
       this.recetteForm.status = status

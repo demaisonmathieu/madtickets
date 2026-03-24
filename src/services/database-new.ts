@@ -38,6 +38,8 @@ export interface Project {
   chiffrageEnabled?: boolean;
   tjm?: number;
   hoursPerDay?: number;
+  // Partage des recettes
+  recetteShareToken?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
