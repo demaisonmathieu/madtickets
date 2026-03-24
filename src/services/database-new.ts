@@ -317,7 +317,13 @@ class DatabaseService {
     const currentUserId = Number(session?.userId);
     if (!Number.isFinite(currentUserId) || currentUserId <= 0) return false;
 
-    return (normalizedProject.followerUserIds || []).includes(currentUserId);
+    const followers = normalizedProject.followerUserIds || [];
+    if (followers.length === 0) {
+      // Fallback: projet sans followers explicites => accessible aux utilisateurs connectés
+      return true;
+    }
+
+    return followers.includes(currentUserId);
   }
 
   protected filterProjectsForCurrentUser(projects: Project[]): Project[] {
@@ -335,7 +341,15 @@ class DatabaseService {
       return [];
     }
 
-    return normalizedProjects.filter(project => (project.followerUserIds || []).includes(currentUserId));
+    return normalizedProjects.filter(project => {
+      const followers = project.followerUserIds || [];
+      if (followers.length === 0) {
+        // Fallback: ne pas masquer les projets historiques sans followers configurés
+        return true;
+      }
+
+      return followers.includes(currentUserId);
+    });
   }
 
   protected ensureAccessibleProject(project?: Project | null): Project {
