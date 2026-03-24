@@ -169,7 +169,7 @@ export default {
         const response = await fetch(
           `${getApiBaseUrl()}/public/recette/${encodeURIComponent(String(token || ''))}/tickets/${ticket.id}/criteria`,
           {
-            method: 'PATCH',
+            method: 'POST',
             headers: {
               'Content-Type': 'application/json'
             },

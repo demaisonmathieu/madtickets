@@ -1054,6 +1054,18 @@ app.patch('/api/public/recette/:token/tickets/:ticketId/criteria', async (req, r
   }
 })
 
+app.post('/api/public/recette/:token/tickets/:ticketId/criteria', async (req, res, next) => {
+  try {
+    const token = String(req.params.token || '').trim()
+    if (!token) {
+      throw makeError('Token manquant', 400)
+    }
+    res.json(await updatePublicRecetteCriterion(token, req.params.ticketId, req.body || {}))
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.post('/api/rpc', async (req, res, next) => {
   try {
     const { method, params = [] } = req.body || {}
