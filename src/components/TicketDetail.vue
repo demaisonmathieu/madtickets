@@ -395,6 +395,11 @@
         <div class="detail-section">
           <h3>🧪 Recette (évolution / bug)</h3>
           <div class="card" style="background: #f8f9fa; border: 1px solid #e0e0e0;">
+            <div style="display: flex; justify-content: flex-end; margin-bottom: 0.75rem;">
+              <button type="button" class="btn btn-secondary btn-sm" @click="exportRecetteToXls">
+                📊 Exporter le cahier de recette (.xls)
+              </button>
+            </div>
             <div class="info-grid" style="margin-bottom: 0.75rem;">
               <div class="info-item">
                 <strong>Couverture critères :</strong>
@@ -1154,6 +1159,94 @@ export default {
         'rejected': '❌ Recette KO'
       }
       return labels[status] || '🧪 À recetter'
+    },
+    exportRecetteToXls() {
+      if (!this.ticket?.id) return
+
+      const criteriaRows = this.userStories.flatMap(story => {
+        const criteria = this.getStoryCriteria(story)
+        if (criteria.length === 0) {
+          return [{
+            'User story ID': story.id || '',
+            'User story': story.title || '',
+            'Statut story': story.status || 'todo',
+            'Critère ID': '',
+            'Critère': '',
+            'Validé': 'Non',
+            'Date validation': '',
+            'Validé par': ''
+          }]
+        }
+
+        return criteria.map(criterion => ({
+          'User story ID': story.id || '',
+          'User story': story.title || '',
+          'Statut story': story.status || 'todo',
+          'Critère ID': criterion.id || '',
+          'Critère': criterion.text || '',
+          'Validé': criterion.checked ? 'Oui' : 'Non',
+          'Date validation': criterion.checkedAt ? this.formatDateTime(criterion.checkedAt) : '',
+          'Validé par': criterion.checkedByUserId ? this.getUserDisplayName(criterion.checkedByUserId) : ''
+        }))
+      })
+
+      const historyRows = (this.ticket.recetteHistory || []).map(entry => ({
+        'Date': entry.createdAt ? this.formatDateTime(entry.createdAt) : '',
+        'Statut': this.getRecetteStatusLabel(entry.status),
+        'Commentaire': entry.comment || '',
+        'Couverture': `${entry.checkedCriteria || 0}/${entry.totalCriteria || 0}`,
+        'Couverture %': entry.coveragePercent ?? '',
+        'Auteur': entry.byUserId ? this.getUserDisplayName(entry.byUserId) : ''
+      }))
+
+      const summaryRows = [
+        { Champ: 'Projet', Valeur: this.project?.name || '' },
+        { Champ: 'Ticket ID', Valeur: this.ticket.id },
+        { Champ: 'Titre du ticket', Valeur: this.ticket.title || '' },
+        { Champ: 'Statut ticket', Valeur: this.getStatusLabel(this.ticket.status) },
+        { Champ: 'Priorité', Valeur: this.getPriorityLabel(this.ticket.priority) },
+        { Champ: 'Statut recette', Valeur: this.getRecetteStatusLabel(this.ticket.recetteStatus) },
+        { Champ: 'Commentaire recette', Valeur: this.ticket.recetteComment || this.recetteForm.comment || '' },
+        { Champ: 'Date recette', Valeur: this.ticket.recetteDate ? this.formatDateTime(this.ticket.recetteDate) : '' },
+        { Champ: 'Recette par', Valeur: this.ticket.recetteByUserId ? this.getUserDisplayName(this.ticket.recetteByUserId) : '' },
+        { Champ: 'Couverture critères', Valeur: `${this.recetteCoverage.checked} / ${this.recetteCoverage.total} (${this.recetteCoverage.percent}%)` },
+        { Champ: 'Stories terminées', Valeur: `${this.recetteCoverage.storiesDone} / ${this.recetteCoverage.storiesTotal}` },
+        { Champ: 'Description ticket', Valeur: this.extractText(this.ticket.description || '') }
+      ]
+
+      const storiesRows = this.userStories.map(story => ({
+        'ID': story.id || '',
+        'Titre': story.title || '',
+        'Description': this.extractText(story.description || ''),
+        'Statut': story.status || 'todo',
+        'Créée le': story.createdAt ? this.formatDateTime(story.createdAt) : '',
+        'Critères total': this.getStoryCriteria(story).length,
+        'Critères validés': this.getStoryCriteria(story).filter(c => c.checked).length
+      }))
+
+      const workbook = XLSX.utils.book_new()
+
+      const summarySheet = XLSX.utils.json_to_sheet(summaryRows)
+      const storiesSheet = XLSX.utils.json_to_sheet(storiesRows)
+      const criteriaSheet = XLSX.utils.json_to_sheet(criteriaRows)
+      const historySheet = XLSX.utils.json_to_sheet(historyRows.length ? historyRows : [{ Date: '', Statut: '', Commentaire: '', 'Couverture': '', 'Couverture %': '', Auteur: '' }])
+
+      summarySheet['!cols'] = [{ wch: 24 }, { wch: 90 }]
+      storiesSheet['!cols'] = [{ wch: 10 }, { wch: 40 }, { wch: 60 }, { wch: 18 }, { wch: 22 }, { wch: 14 }, { wch: 16 }]
+      criteriaSheet['!cols'] = [{ wch: 14 }, { wch: 36 }, { wch: 16 }, { wch: 14 }, { wch: 60 }, { wch: 10 }, { wch: 22 }, { wch: 24 }]
+      historySheet['!cols'] = [{ wch: 22 }, { wch: 22 }, { wch: 60 }, { wch: 14 }, { wch: 14 }, { wch: 24 }]
+
+      XLSX.utils.book_append_sheet(workbook, summarySheet, 'Synthese')
+      XLSX.utils.book_append_sheet(workbook, storiesSheet, 'UserStories')
+      XLSX.utils.book_append_sheet(workbook, criteriaSheet, 'Criteres')
+      XLSX.utils.book_append_sheet(workbook, historySheet, 'Historique')
+
+      const safeTitle = String(this.ticket.title || `ticket-${this.ticket.id}`)
+        .replace(/[\\/:*?"<>|]+/g, '-')
+        .replace(/\s+/g, '_')
+        .slice(0, 80)
+
+      XLSX.writeFile(workbook, `cahier-recette-${safeTitle}.xls`, { bookType: 'xls' })
     },
     setRecetteStatus(status) {
       this.recetteForm.status = status
