@@ -79,12 +79,13 @@
     <!-- Kanban Board -->
     <div class="kanban-board">
       <!-- Grouper par projet ou utiliser les colonnes du projet filtré -->
-      <div v-for="column in kanbanColumns" :key="column.id" class="kanban-column">
+      <div v-for="column in kanbanColumns" :key="column.id" class="kanban-column" :class="{ 'is-folded': column.folded }">
         <div class="column-header" :style="{ backgroundColor: column.color }">
-          <h3>{{ column.label }}</h3>
+          <h3>{{ column.folded ? '▸ ' : '' }}{{ column.label }}</h3>
           <span class="count-badge">{{ getTicketsByStatus(column.id).length }}</span>
         </div>
-        <div 
+        <div
+          v-if="!column.folded"
           class="column-content"
           @drop="onDrop($event, column.id)"
           @dragover.prevent
@@ -119,6 +120,9 @@
           <div v-if="getTicketsByStatus(column.id).length === 0" class="empty-column">
             Aucun ticket
           </div>
+        </div>
+        <div v-else class="column-content-folded">
+          Étape repliée
         </div>
       </div>
     </div>
@@ -173,18 +177,21 @@ export default {
           id: s.id.toString(),
           label: s.name,
           color: s.color || '#cfe2ff',
-          folded: s.folded
+          folded: Boolean(s.folded)
         }))
       }
       // Sinon : colonnes JSONB du projet
       if (this.selectedProject?.kanbanColumns?.length) {
-        return this.selectedProject.kanbanColumns
+        return this.selectedProject.kanbanColumns.map(c => ({
+          ...c,
+          folded: Boolean(c.folded)
+        }))
       }
       // Fallback par défaut
       return [
-        { id: 'todo', label: 'À faire', color: '#fff3cd' },
-        { id: 'in-progress', label: 'En cours', color: '#cfe2ff' },
-        { id: 'done', label: 'Terminé', color: '#d1e7dd' }
+        { id: 'todo', label: 'À faire', color: '#fff3cd', folded: false },
+        { id: 'in-progress', label: 'En cours', color: '#cfe2ff', folded: false },
+        { id: 'done', label: 'Terminé', color: '#d1e7dd', folded: false }
       ]
     },
     currentProjectColumns() {
@@ -373,6 +380,10 @@ export default {
   flex-shrink: 0;
 }
 
+.kanban-column.is-folded {
+  width: 140px;
+}
+
 .column-header {
   padding: 1rem;
   color: #333;
@@ -398,6 +409,16 @@ export default {
   padding: 1rem;
   min-height: 400px;
   transition: background-color 0.2s;
+}
+
+.column-content-folded {
+  min-height: 120px;
+  padding: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #888;
+  font-size: 0.85rem;
 }
 
 .column-content.drag-over {

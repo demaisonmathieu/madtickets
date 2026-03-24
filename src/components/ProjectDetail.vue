@@ -374,15 +374,16 @@
               v-for="column in ticketKanbanColumns"
               :key="`project-ticket-col-${column.id}`"
               class="project-ticket-kanban-column"
+              :class="{ 'is-folded': column.folded }"
               @dragover.prevent
               @drop="onTicketDrop(column.id)"
             >
               <div class="project-ticket-kanban-header" :style="{ backgroundColor: column.color || '#f1f3f5' }">
-                <h4>{{ column.label }}</h4>
+                <h4>{{ column.folded ? '▸ ' : '' }}{{ column.label }}</h4>
                 <span class="count-badge">{{ getTicketsByKanbanStatus(column.id).length }}</span>
               </div>
 
-              <div class="project-ticket-kanban-body">
+              <div v-if="!column.folded" class="project-ticket-kanban-body">
                 <div
                   v-for="ticket in getTicketsByKanbanStatus(column.id)"
                   :key="`project-ticket-card-${ticket.id}`"
@@ -404,6 +405,7 @@
                   Aucun ticket
                 </div>
               </div>
+              <div v-else class="project-ticket-kanban-folded">Étape repliée</div>
             </div>
           </div>
         </template>
@@ -992,15 +994,16 @@
                 v-for="column in localTaskKanbanColumns"
                 :key="`project-local-col-${column.id}`"
                 class="project-ticket-kanban-column"
+                :class="{ 'is-folded': column.folded }"
                 @dragover.prevent
                 @drop="onLocalTaskDrop(column.id)"
               >
                 <div class="project-ticket-kanban-header" :style="{ backgroundColor: column.color || '#f1f3f5' }">
-                  <h4>{{ column.label }}</h4>
+                  <h4>{{ column.folded ? '▸ ' : '' }}{{ column.label }}</h4>
                   <span class="count-badge">{{ getLocalTasksByKanbanStatus(column.id).length }}</span>
                 </div>
 
-                <div class="project-ticket-kanban-body">
+                <div v-if="!column.folded" class="project-ticket-kanban-body">
                   <div
                     v-for="task in getLocalTasksByKanbanStatus(column.id)"
                     :key="`project-local-card-${task.id}`"
@@ -1026,6 +1029,7 @@
                     Aucune tâche locale
                   </div>
                 </div>
+                <div v-else class="project-ticket-kanban-folded">Étape repliée</div>
               </div>
             </div>
           </template>
@@ -1256,9 +1260,9 @@ export default {
       uploadedFileSize: '',
       uploadedFileContent: '',
       defaultColumns: [
-        { id: 'todo', label: 'À faire', color: '#fff3cd' },
-        { id: 'in-progress', label: 'En cours', color: '#cfe2ff' },
-        { id: 'done', label: 'Terminé', color: '#d1e7dd' }
+        { id: 'todo', label: 'À faire', color: '#fff3cd', folded: false },
+        { id: 'in-progress', label: 'En cours', color: '#cfe2ff', folded: false },
+        { id: 'done', label: 'Terminé', color: '#d1e7dd', folded: false }
       ],
       projectStages: [], // étapes relationnelles (kanban_stages) du projet courant
       ticketForm: {
@@ -1301,9 +1305,13 @@ export default {
     // Colonnes Kanban effectives : priorité aux étapes relationnelles (kanban_stages),
     // puis aux colonnes JSON du projet, puis aux colonnes par défaut
     effectiveColumns() {
-      if (this.projectStages && this.projectStages.length > 0) return this.projectStages
-      if (this.project?.kanbanColumns?.length) return this.project.kanbanColumns
-      return this.defaultColumns
+      if (this.projectStages && this.projectStages.length > 0) {
+        return this.projectStages.map(col => ({ ...col, folded: Boolean(col.folded) }))
+      }
+      if (this.project?.kanbanColumns?.length) {
+        return this.project.kanbanColumns.map(col => ({ ...col, folded: Boolean(col.folded) }))
+      }
+      return this.defaultColumns.map(col => ({ ...col, folded: Boolean(col.folded) }))
     },
     filteredTickets() {
       const baseTickets = this.showCompletedTickets
@@ -1675,7 +1683,8 @@ export default {
         this.projectStages = (stages || []).map(s => ({
           id: String(s.id),
           label: s.name || '',
-          color: s.color || '#cfe2ff'
+          color: s.color || '#cfe2ff',
+          folded: Boolean(s.folded)
         }))
       } catch (e) {
         this.projectStages = []
@@ -3896,6 +3905,12 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
   overflow: hidden;
 }
 
+.project-ticket-kanban-column.is-folded {
+  min-width: 150px;
+  max-width: 150px;
+  flex: 0 0 150px;
+}
+
 .project-ticket-kanban-header {
   padding: 0.75rem;
   display: flex;
@@ -3910,6 +3925,16 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
 .project-ticket-kanban-body {
   min-height: 220px;
   padding: 0.75rem;
+}
+
+.project-ticket-kanban-folded {
+  min-height: 90px;
+  padding: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #888;
+  font-size: 0.85rem;
 }
 
 .project-ticket-kanban-card {
