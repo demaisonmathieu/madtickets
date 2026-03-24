@@ -1,6 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
+import nodemailer from 'nodemailer'
 import { query, withTransaction } from './db.js'
 
 dotenv.config()
@@ -179,6 +180,92 @@ function makeError(message, status = 400) {
   const error = new Error(message)
   error.status = status
   return error
+}
+
+function parseEmailList(input) {
+  if (Array.isArray(input)) {
+    return input.map(v => String(v || '').trim()).filter(Boolean)
+  }
+
+  return String(input || '')
+    .split(/[;,\s]+/)
+    .map(v => v.trim())
+    .filter(Boolean)
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim())
+}
+
+async function sendClientEmail(payload) {
+  const toList = parseEmailList(payload?.to)
+  const ccList = parseEmailList(payload?.cc)
+  const subject = String(payload?.subject || '').trim()
+  const body = String(payload?.body || '').trim()
+
+  if (!toList.length) {
+    throw makeError('Destinataire manquant', 400)
+  }
+
+  const invalidEmails = [...toList, ...ccList].filter(email => !isValidEmail(email))
+  if (invalidEmails.length > 0) {
+    throw makeError(`Adresse(s) invalide(s): ${invalidEmails.join(', ')}`, 400)
+  }
+
+  if (!subject) {
+    throw makeError('Sujet manquant', 400)
+  }
+
+  if (!body) {
+    throw makeError('Message manquant', 400)
+  }
+
+  const host = process.env.SMTP_HOST
+  const port = Number(process.env.SMTP_PORT || 587)
+  const secure = String(process.env.SMTP_SECURE || 'false').toLowerCase() === 'true'
+  const user = process.env.SMTP_USER || ''
+  const pass = process.env.SMTP_PASS || ''
+  const from = process.env.SMTP_FROM || user
+
+  if (!host || !from) {
+    throw makeError('SMTP non configuré: définir SMTP_HOST et SMTP_FROM (ou SMTP_USER)', 500)
+  }
+
+  const transporter = nodemailer.createTransport({
+    host,
+    port,
+    secure,
+    auth: user && pass ? { user, pass } : undefined,
+  })
+
+  const ticketContext = [
+    payload?.ticketId ? `Ticket #${payload.ticketId}` : '',
+    payload?.ticketTitle ? `Titre: ${payload.ticketTitle}` : '',
+    payload?.projectName ? `Projet: ${payload.projectName}` : '',
+  ].filter(Boolean).join('\n')
+
+  const textBody = ticketContext ? `${body}\n\n---\n${ticketContext}` : body
+  const htmlBody = textBody
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>')
+
+  const info = await transporter.sendMail({
+    from,
+    to: toList.join(', '),
+    cc: ccList.length ? ccList.join(', ') : undefined,
+    subject,
+    text: textBody,
+    html: htmlBody,
+  })
+
+  return {
+    ok: true,
+    messageId: info.messageId,
+    accepted: info.accepted,
+    rejected: info.rejected,
+  }
 }
 
 function mapProject(row) {
@@ -1289,6 +1376,14 @@ app.post('/api/public/recette/:token/tickets/:ticketId/stories', async (req, res
     const token = String(req.params.token || '').trim()
     if (!token) throw makeError('Token manquant', 400)
     res.json(await addPublicRecetteUserStory(token, req.params.ticketId, req.body || {}))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/email/send', async (req, res, next) => {
+  try {
+    res.json(await sendClientEmail(req.body || {}))
   } catch (error) {
     next(error)
   }

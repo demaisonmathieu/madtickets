@@ -627,6 +627,52 @@
       <!-- Onglet Messages Odoo -->
       <div v-if="activeTab === 'messages'" class="tab-content">
         <div class="detail-section">
+          <div class="card" style="margin-bottom: 1.5rem; background: #f8f9fa; border: 1px solid #e0e0e0;">
+            <h4>📧 Envoyer un email au client</h4>
+            <form @submit.prevent="sendClientEmail">
+              <div class="form-group">
+                <label>Destinataire(s) *</label>
+                <input
+                  v-model="emailForm.to"
+                  type="text"
+                  placeholder="client@exemple.com (plusieurs: séparés par , ; ou espace)"
+                />
+              </div>
+              <div class="form-group">
+                <label>Copie (CC)</label>
+                <input
+                  v-model="emailForm.cc"
+                  type="text"
+                  placeholder="chef.projet@exemple.com"
+                />
+              </div>
+              <div class="form-group">
+                <label>Sujet *</label>
+                <input v-model="emailForm.subject" type="text" placeholder="Sujet de l'email" />
+              </div>
+              <div class="form-group">
+                <label>Message *</label>
+                <textarea v-model="emailForm.body" rows="6" placeholder="Votre message..."></textarea>
+              </div>
+
+              <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                <button type="submit" class="btn btn-primary" :disabled="sendingClientEmail">
+                  {{ sendingClientEmail ? '⏳ Envoi...' : '📨 Envoyer l\'email' }}
+                </button>
+                <button type="button" class="btn btn-secondary" @click="openMailClientDraft">
+                  ✉️ Ouvrir dans ma messagerie
+                </button>
+              </div>
+
+              <div v-if="clientEmailStatus" class="alert alert-info" style="margin-top: 1rem;">
+                {{ clientEmailStatus }}
+              </div>
+              <div v-if="clientEmailError" class="alert alert-danger" style="margin-top: 1rem;">
+                {{ clientEmailError }}
+              </div>
+            </form>
+          </div>
+
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
             <h3>Messages Odoo</h3>
             <button @click="loadOdooMessages" class="btn btn-secondary" :disabled="loadingMessages">
@@ -779,6 +825,7 @@ import { db } from '../services/database-new'
 import { odooService } from '../services/odoo-new'
 import RichTextEditor from './RichTextEditor.vue'
 import { auth } from '../services/auth'
+import { apiFetch } from '../services/api'
 import * as XLSX from 'xlsx'
 
 export default {
@@ -820,6 +867,12 @@ export default {
         subject: '',
         body: ''
       },
+      emailForm: {
+        to: '',
+        cc: '',
+        subject: '',
+        body: ''
+      },
       // Prévisualisation des pièces jointes
       showAttachmentPreview: false,
       currentAttachment: null,
@@ -829,6 +882,9 @@ export default {
       searchingRecipients: false,
       sendingMessage: false,
       messageSendError: null,
+      sendingClientEmail: false,
+      clientEmailStatus: '',
+      clientEmailError: '',
       recipientSearchTimeout: null,
       // Feuilles de temps
       timeEntries: [],
@@ -989,6 +1045,15 @@ export default {
         this.recetteForm = {
           status: this.ticket.recetteStatus || 'pending',
           comment: this.ticket.recetteComment || ''
+        }
+
+        if (!this.emailForm.subject) {
+          this.emailForm.subject = `[Ticket #${this.ticket.id}] ${this.ticket.title}`
+        }
+
+        if (!this.emailForm.body) {
+          this.emailForm.body = `Bonjour,\n\nConcernant le ticket "${this.ticket.title}" du projet "${this.project?.name || ''}",\n\n` +
+            `Merci de votre retour.\n\nCordialement,`
         }
       }
     },
@@ -1192,6 +1257,79 @@ export default {
       this.availableRecipients = []
       this.selectedRecipients = []
       this.messageSendError = null
+    },
+    parseEmailList(rawValue) {
+      return String(rawValue || '')
+        .split(/[;,\s]+/)
+        .map(v => v.trim())
+        .filter(Boolean)
+    },
+    isValidEmail(email) {
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim())
+    },
+    openMailClientDraft() {
+      const toList = this.parseEmailList(this.emailForm.to)
+      if (toList.length === 0) {
+        alert('Merci de renseigner au moins une adresse email destinataire.')
+        return
+      }
+
+      const ccList = this.parseEmailList(this.emailForm.cc)
+      const subject = encodeURIComponent(this.emailForm.subject || '')
+      const body = encodeURIComponent(this.emailForm.body || '')
+      const ccParam = ccList.length > 0 ? `&cc=${encodeURIComponent(ccList.join(','))}` : ''
+      const mailtoUrl = `mailto:${encodeURIComponent(toList.join(','))}?subject=${subject}&body=${body}${ccParam}`
+      window.open(mailtoUrl, '_blank')
+    },
+    async sendClientEmail() {
+      this.clientEmailStatus = ''
+      this.clientEmailError = ''
+
+      const toList = this.parseEmailList(this.emailForm.to)
+      const ccList = this.parseEmailList(this.emailForm.cc)
+
+      if (toList.length === 0) {
+        this.clientEmailError = 'Merci de renseigner au moins un destinataire.'
+        return
+      }
+
+      const invalidEmails = [...toList, ...ccList].filter(email => !this.isValidEmail(email))
+      if (invalidEmails.length > 0) {
+        this.clientEmailError = `Adresse(s) invalide(s): ${invalidEmails.join(', ')}`
+        return
+      }
+
+      if (!String(this.emailForm.subject || '').trim()) {
+        this.clientEmailError = 'Le sujet est obligatoire.'
+        return
+      }
+
+      if (!String(this.emailForm.body || '').trim()) {
+        this.clientEmailError = 'Le message est obligatoire.'
+        return
+      }
+
+      this.sendingClientEmail = true
+      try {
+        await apiFetch('/email/send', {
+          method: 'POST',
+          body: JSON.stringify({
+            to: toList,
+            cc: ccList,
+            subject: this.emailForm.subject,
+            body: this.emailForm.body,
+            ticketId: this.ticket?.id || null,
+            ticketTitle: this.ticket?.title || '',
+            projectName: this.project?.name || ''
+          })
+        })
+
+        this.clientEmailStatus = '✅ Email envoyé au client'
+      } catch (error) {
+        this.clientEmailError = error?.message || 'Erreur lors de l\'envoi de l\'email'
+      } finally {
+        this.sendingClientEmail = false
+      }
     },
     getStatusClass(status) {
       const classes = {
