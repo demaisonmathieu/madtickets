@@ -693,6 +693,7 @@ import { db } from '../services/database-new'
 import { odooService } from '../services/odoo-new'
 import RichTextEditor from './RichTextEditor.vue'
 import { auth } from '../services/auth'
+import * as XLSX from 'xlsx'
 
 export default {
   name: 'TicketDetail',
