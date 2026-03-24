@@ -301,6 +301,70 @@
         </div>
       </div>
     </div>
+
+    <!-- Modal édition tâche locale depuis sprint -->
+    <div v-if="showLocalTaskEditor" class="modal-overlay" @click.self="closeLocalTaskEditor">
+      <div class="modal-content" style="max-width: 760px;">
+        <div class="modal-header">
+          <h2>✅ Modifier la tâche locale</h2>
+          <button @click="closeLocalTaskEditor" class="btn-close">✕</button>
+        </div>
+
+        <div class="modal-body">
+          <form @submit.prevent="saveLocalTaskFromSprint">
+            <div class="form-group">
+              <label>Titre *</label>
+              <input v-model="localTaskForm.title" required />
+            </div>
+
+            <div class="form-group">
+              <label>Description</label>
+              <RichTextEditor v-model="localTaskForm.description" placeholder="Description de la tâche..." />
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label>Statut</label>
+                <select v-model="localTaskForm.status">
+                  <option v-for="col in kanbanColumns" :key="col.id" :value="String(col.id)">
+                    {{ col.label }}
+                  </option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Priorité</label>
+                <select v-model="localTaskForm.priority">
+                  <option value="low">Basse</option>
+                  <option value="medium">Moyenne</option>
+                  <option value="high">Haute</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label>Temps estimé (h)</label>
+                <input v-model.number="localTaskForm.estimatedTime" type="number" step="0.5" min="0" />
+              </div>
+              <div class="form-group">
+                <label>Date de début</label>
+                <input v-model="localTaskForm.startDate" type="date" />
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Date de fin</label>
+              <input v-model="localTaskForm.endDate" type="date" />
+            </div>
+
+            <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+              <button type="submit" class="btn btn-primary">💾 Enregistrer</button>
+              <button type="button" @click="closeLocalTaskEditor" class="btn btn-secondary">Annuler</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -343,6 +407,17 @@ export default {
       ticketView: 'kanban',
       draggedTicket: null,
       draggedItem: null,
+      showLocalTaskEditor: false,
+      editingLocalTaskId: null,
+      localTaskForm: {
+        title: '',
+        description: '',
+        status: 'todo',
+        priority: 'medium',
+        estimatedTime: null,
+        startDate: '',
+        endDate: ''
+      },
       form: {
         name: '',
         goal: '',
@@ -597,7 +672,55 @@ export default {
       this.$router.push(`/tickets/${ticketId}`)
     },
     editLocalTask(taskId) {
-      this.$router.push(`/local-tasks/${taskId}`)
+      this.openLocalTaskEditor(taskId)
+    },
+    openLocalTaskEditor(taskId) {
+      const id = Number(taskId)
+      const task = this.localTasks.find(t => Number(t.id) === id)
+      if (!task) {
+        alert('Tâche locale introuvable')
+        return
+      }
+
+      this.editingLocalTaskId = id
+      this.localTaskForm = {
+        title: task.title || '',
+        description: task.description || '',
+        status: String(task.status || 'todo'),
+        priority: task.priority || 'medium',
+        estimatedTime: task.estimatedTime != null ? Number(task.estimatedTime) : null,
+        startDate: task.startDate || '',
+        endDate: task.endDate || ''
+      }
+      this.showLocalTaskEditor = true
+    },
+    closeLocalTaskEditor() {
+      this.showLocalTaskEditor = false
+      this.editingLocalTaskId = null
+    },
+    async saveLocalTaskFromSprint() {
+      if (!this.editingLocalTaskId) return
+
+      const updates = {
+        title: this.localTaskForm.title,
+        description: this.localTaskForm.description,
+        status: this.localTaskForm.status,
+        priority: this.localTaskForm.priority,
+        estimatedTime: this.localTaskForm.estimatedTime != null ? Number(this.localTaskForm.estimatedTime) : null,
+        startDate: this.localTaskForm.startDate || null,
+        endDate: this.localTaskForm.endDate || null
+      }
+
+      if (this.useRelationalStages) {
+        updates.stageId = Number.parseInt(String(this.localTaskForm.status), 10)
+      }
+
+      await db.updateLocalTask(this.editingLocalTaskId, updates)
+      await this.loadData()
+      if (this.selectedSprint) {
+        this.selectedSprint = await db.getSprint(this.selectedSprint.id)
+      }
+      this.closeLocalTaskEditor()
     },
     getSprintName(sprintId) {
       const sprint = this.sprints.find(s => Number(s.id) === Number(sprintId))
