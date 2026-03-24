@@ -311,6 +311,10 @@ class DatabaseService {
     const normalizedProject = this.normalizeProject(project);
     if (!normalizedProject) return false;
 
+    if (REMOTE_DB_ENABLED) {
+      return true;
+    }
+
     const session = this.getCurrentSession();
     if (session?.role === 'admin') return true;
 
@@ -330,6 +334,10 @@ class DatabaseService {
     const normalizedProjects = projects
       .map(project => this.normalizeProject(project))
       .filter((project): project is Project => Boolean(project));
+
+    if (REMOTE_DB_ENABLED) {
+      return normalizedProjects;
+    }
 
     const session = this.getCurrentSession();
     if (session?.role === 'admin') {
