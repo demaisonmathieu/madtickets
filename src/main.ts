@@ -90,6 +90,10 @@ const router = createRouter({
 })
 
 router.beforeEach(async to => {
+  if (to.path.startsWith('/recette-share/')) {
+    return true
+  }
+
   const session = auth.getSession()
   const isPublic = Boolean(to.meta?.public)
   const isAdminOnly = Boolean(to.meta?.adminOnly)

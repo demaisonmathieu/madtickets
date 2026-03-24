@@ -53,11 +53,15 @@
             <div v-for="story in ticket.userStories" :key="story.id" class="story-item">
               <div class="story-title">{{ story.title }}</div>
               <div class="criteria-list">
-                <div v-for="criterion in getStoryCriteria(story)" :key="criterion.id" class="criterion">
-                  <span v-if="criterion.checked" class="criterion-check">✅</span>
-                  <span v-else class="criterion-check">☐</span>
+                <label v-for="criterion in getStoryCriteria(story)" :key="criterion.id" class="criterion">
+                  <input
+                    type="checkbox"
+                    :checked="Boolean(criterion.checked)"
+                    :disabled="isCriterionSaving(ticket.id, story.id, criterion.id)"
+                    @change="toggleCriterion(ticket, story, criterion, $event.target.checked)"
+                  >
                   <span>{{ criterion.text }}</span>
-                </div>
+                </label>
               </div>
             </div>
           </div>
@@ -65,14 +69,14 @@
       </div>
 
       <div class="footer">
-        <small>Lien d'accès partagé - Consultation uniquement</small>
+        <small>Lien d'accès partagé - Modification des critères activée</small>
       </div>
     </div>
   </div>
 </template>
 
 <script>
-import { db } from '../services/database-new'
+import { getApiBaseUrl } from '../services/api'
 
 export default {
   name: 'RecetteSharePublic',
@@ -81,7 +85,8 @@ export default {
       project: null,
       allTickets: [],
       loading: true,
-      error: null
+      error: null,
+      savingCriteriaKeys: {}
     }
   },
   computed: {
@@ -107,19 +112,16 @@ export default {
           return
         }
 
-        // Chercher le projet par token
-        const allProjects = await db.getAllProjects()
-        const project = allProjects.find(p => p.recetteShareToken === token)
+        const response = await fetch(`${getApiBaseUrl()}/public/recette/${encodeURIComponent(token)}`)
+        const body = await response.json().catch(() => ({}))
 
-        if (!project) {
-          this.error = 'Accès refusé : token invalide'
+        if (!response.ok) {
+          this.error = body?.error || 'Accès refusé : token invalide'
           return
         }
 
-        this.project = project
-
-        // Charger les tickets du projet
-        this.allTickets = await db.getTicketsByProject(project.id)
+        this.project = body.project || null
+        this.allTickets = Array.isArray(body.tickets) ? body.tickets : []
       } catch (err) {
         console.error('Erreur chargement recette share:', err)
         this.error = 'Erreur lors du chargement des données'
@@ -135,11 +137,67 @@ export default {
         .split('\n')
         .map(line => line.trim())
         .filter(Boolean)
-      return legacyLines.map((text, idx) => ({
-        id: Number(`${story.id || Date.now()}${idx}`),
+      const generated = legacyLines.map((text, idx) => ({
+        id: `${String(story?.id || 'story')}-${idx + 1}`,
         text,
         checked: false
       }))
+      if (story && !Array.isArray(story.acceptanceCriteriaItems)) {
+        story.acceptanceCriteriaItems = generated
+      }
+      return generated
+    },
+    getCriterionKey(ticketId, storyId, criterionId) {
+      return `${ticketId}:${storyId}:${criterionId}`
+    },
+    isCriterionSaving(ticketId, storyId, criterionId) {
+      const key = this.getCriterionKey(ticketId, storyId, criterionId)
+      return Boolean(this.savingCriteriaKeys[key])
+    },
+    async toggleCriterion(ticket, story, criterion, checked) {
+      const token = this.$route.params.token
+      const key = this.getCriterionKey(ticket.id, story.id, criterion.id)
+      const previous = Boolean(criterion.checked)
+
+      criterion.checked = Boolean(checked)
+      this.savingCriteriaKeys = {
+        ...this.savingCriteriaKeys,
+        [key]: true
+      }
+
+      try {
+        const response = await fetch(
+          `${getApiBaseUrl()}/public/recette/${encodeURIComponent(String(token || ''))}/tickets/${ticket.id}/criteria`,
+          {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              storyId: story.id,
+              criterionId: criterion.id,
+              checked: Boolean(checked)
+            })
+          }
+        )
+
+        const body = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          throw new Error(body?.error || 'Échec de la mise à jour du critère')
+        }
+
+        const idx = this.allTickets.findIndex(t => Number(t.id) === Number(ticket.id))
+        if (idx >= 0) {
+          this.allTickets.splice(idx, 1, body)
+        }
+      } catch (err) {
+        criterion.checked = previous
+        alert(`❌ ${err?.message || 'Erreur lors de la mise à jour'}`)
+      } finally {
+        const next = { ...this.savingCriteriaKeys }
+        delete next[key]
+        this.savingCriteriaKeys = next
+      }
     },
     getCoverageStat(ticket) {
       if (!ticket.userStories || ticket.userStories.length === 0) return 'N/A'
@@ -376,12 +434,13 @@ export default {
   gap: 0.5rem;
   color: #666;
   font-size: 0.9rem;
+  cursor: pointer;
 }
 
-.criterion-check {
-  display: inline-block;
-  min-width: 1.2rem;
-  text-align: center;
+.criterion input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
 }
 
 .footer {

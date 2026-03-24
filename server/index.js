@@ -506,6 +506,117 @@ async function updateTicket(id, updates) {
   return updateRow('tickets', id, ticketFields, updates, mapTicket, jsonTicketFields)
 }
 
+async function getProjectByRecetteToken(token) {
+  const result = await query('SELECT * FROM projects WHERE recette_share_token = $1 LIMIT 1', [token])
+  if (!result.rows.length) {
+    throw makeError('Lien de recette invalide', 404)
+  }
+  return mapProject(result.rows[0])
+}
+
+async function getPublicRecetteByToken(token) {
+  const project = await getProjectByRecetteToken(token)
+  const result = await query(
+    `SELECT *
+     FROM tickets
+     WHERE project_id = $1
+       AND (
+         COALESCE(recette_status, 'pending') <> 'pending'
+         OR COALESCE(jsonb_array_length(user_stories), 0) > 0
+       )
+     ORDER BY updated_at DESC, id DESC`,
+    [project.id]
+  )
+
+  return {
+    project: {
+      id: project.id,
+      name: project.name,
+      description: project.description,
+    },
+    tickets: result.rows.map(mapTicket),
+  }
+}
+
+async function updatePublicRecetteCriterion(token, ticketId, payload) {
+  const project = await getProjectByRecetteToken(token)
+  const normalizedTicketId = Number(ticketId)
+
+  if (!Number.isFinite(normalizedTicketId) || normalizedTicketId <= 0) {
+    throw makeError('Ticket invalide', 400)
+  }
+
+  const storyId = payload?.storyId
+  const criterionId = payload?.criterionId
+  const checked = Boolean(payload?.checked)
+
+  if (storyId === undefined || storyId === null || criterionId === undefined || criterionId === null) {
+    throw makeError('Paramètres manquants pour la mise à jour du critère', 400)
+  }
+
+  const result = await query('SELECT * FROM tickets WHERE id = $1 AND project_id = $2 LIMIT 1', [normalizedTicketId, project.id])
+  if (!result.rows.length) {
+    throw makeError('Ticket introuvable pour ce lien de recette', 404)
+  }
+
+  const ticket = mapTicket(result.rows[0])
+  const stories = Array.isArray(ticket.userStories) ? [...ticket.userStories] : []
+
+  let criterionUpdated = false
+  const updatedStories = stories.map((story) => {
+    const sameStory = String(story?.id) === String(storyId)
+    if (!sameStory) return story
+
+    let criteria = Array.isArray(story?.acceptanceCriteriaItems)
+      ? [...story.acceptanceCriteriaItems]
+      : []
+
+    if (!criteria.length) {
+      const legacyLines = String(story?.acceptanceCriteria || '')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+      criteria = legacyLines.map((text, idx) => ({
+        id: `${String(story?.id || 'story')}-${idx + 1}`,
+        text,
+        checked: false,
+      }))
+    }
+
+    const newCriteria = criteria.map((criterion) => {
+      if (String(criterion?.id) !== String(criterionId)) {
+        return criterion
+      }
+      criterionUpdated = true
+      return {
+        ...criterion,
+        checked,
+      }
+    })
+
+    return {
+      ...story,
+      acceptanceCriteriaItems: newCriteria,
+    }
+  })
+
+  if (!criterionUpdated) {
+    throw makeError('Critère introuvable', 404)
+  }
+
+  const updateResult = await query(
+    `UPDATE tickets
+     SET user_stories = $1::jsonb,
+         recette_date = NOW(),
+         updated_at = NOW()
+     WHERE id = $2
+     RETURNING *`,
+    [JSON.stringify(updatedStories), normalizedTicketId]
+  )
+
+  return mapTicket(updateResult.rows[0])
+}
+
 async function deleteTicket(id) {
   await deleteRow('tickets', id)
   return true
@@ -914,6 +1025,30 @@ app.get('/api/health', async (_req, res, next) => {
   try {
     const result = await query('SELECT NOW() AS now')
     res.json({ ok: true, database: 'postgresql', now: result.rows[0].now })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/public/recette/:token', async (req, res, next) => {
+  try {
+    const token = String(req.params.token || '').trim()
+    if (!token) {
+      throw makeError('Token manquant', 400)
+    }
+    res.json(await getPublicRecetteByToken(token))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.patch('/api/public/recette/:token/tickets/:ticketId/criteria', async (req, res, next) => {
+  try {
+    const token = String(req.params.token || '').trim()
+    if (!token) {
+      throw makeError('Token manquant', 400)
+    }
+    res.json(await updatePublicRecetteCriterion(token, req.params.ticketId, req.body || {}))
   } catch (error) {
     next(error)
   }
