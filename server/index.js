@@ -182,7 +182,7 @@ function makeError(message, status = 400) {
 
 function mapProject(row) {
   return {
-  followerUserIds: 'follower_user_ids',
+    followerUserIds: row.follower_user_ids || [],
     id: Number(row.id),
     name: row.name,
     description: row.description,
