@@ -431,16 +431,16 @@
               ></textarea>
             </div>
 
-            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-              <button type="button" class="btn btn-secondary btn-sm" @click="setRecetteStatus('pending')">🔁 À retester</button>
-              <button type="button" class="btn btn-secondary btn-sm" @click="setRecetteStatus('ready_for_test')">🧾 Prêt à tester</button>
-              <button type="button" class="btn btn-secondary btn-sm" @click="setRecetteStatus('in_test')">🧪 En test</button>
-              <button type="button" class="btn btn-secondary btn-sm" @click="setRecetteStatus('blocked')">🚧 Bloqué</button>
-              <button type="button" class="btn btn-primary btn-sm" @click="setRecetteStatus('validated')">✅ Validé</button>
-              <button type="button" class="btn btn-danger btn-sm" @click="setRecetteStatus('rejected')">❌ Rejeté</button>
-              <button type="button" class="btn btn-primary btn-sm" @click="saveRecette" :disabled="savingRecette">
-                {{ savingRecette ? '⏳ Enregistrement...' : '💾 Enregistrer la recette' }}
-              </button>
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+              <button type="button" class="btn btn-secondary btn-sm" @click="setRecetteStatus('pending')" :disabled="savingRecette" :style="ticket.recetteStatus === 'pending' ? 'font-weight:bold;box-shadow:inset 0 0 0 2px rgba(0,0,0,0.3)' : ''">🔁 À retester</button>
+              <button type="button" class="btn btn-secondary btn-sm" @click="setRecetteStatus('ready_for_test')" :disabled="savingRecette" :style="ticket.recetteStatus === 'ready_for_test' ? 'font-weight:bold;box-shadow:inset 0 0 0 2px rgba(0,0,0,0.3)' : ''">🧾 Prêt à tester</button>
+              <button type="button" class="btn btn-secondary btn-sm" @click="setRecetteStatus('in_test')" :disabled="savingRecette" :style="ticket.recetteStatus === 'in_test' ? 'font-weight:bold;box-shadow:inset 0 0 0 2px rgba(0,0,0,0.3)' : ''">🧪 En test</button>
+              <button type="button" class="btn btn-secondary btn-sm" @click="setRecetteStatus('blocked')" :disabled="savingRecette" :style="ticket.recetteStatus === 'blocked' ? 'font-weight:bold;box-shadow:inset 0 0 0 2px rgba(0,0,0,0.3)' : ''">🚧 Bloqué</button>
+              <button type="button" class="btn btn-primary btn-sm" @click="setRecetteStatus('validated')" :disabled="savingRecette" :style="ticket.recetteStatus === 'validated' ? 'font-weight:bold;box-shadow:inset 0 0 0 2px rgba(0,0,0,0.4)' : ''">✅ Validé</button>
+              <button type="button" class="btn btn-danger btn-sm" @click="setRecetteStatus('rejected')" :disabled="savingRecette" :style="ticket.recetteStatus === 'rejected' ? 'font-weight:bold;box-shadow:inset 0 0 0 2px rgba(0,0,0,0.4)' : ''">❌ Rejeté</button>
+              <button type="button" class="btn btn-secondary btn-sm" @click="saveComment" :disabled="savingRecette" title="Sauvegarder le commentaire sans changer le statut">💾 Commentaire</button>
+              <span v-if="savingRecette" style="color:#6c757d;font-size:0.8rem;">⏳...</span>
+              <span v-if="recetteSaved" style="color:#28a745;font-size:0.85rem;font-weight:500;">✓ Enregistré</span>
             </div>
 
             <small v-if="recetteForm.status === 'validated' && !canValidateRecette" style="display:block; color:#856404; margin-top:0.5rem;">
@@ -452,18 +452,49 @@
         <div class="detail-section" v-if="ticket.recetteHistory && ticket.recetteHistory.length > 0">
           <h3>🕓 Historique de recette</h3>
           <div v-for="entry in ticket.recetteHistory" :key="entry.id" class="note-card">
-            <div class="note-meta" style="border-top: none; padding-top: 0; margin-bottom: 0.5rem;">
-              <strong>{{ getRecetteStatusLabel(entry.status) }}</strong>
-              <small>
-                {{ formatDateTime(entry.createdAt) }}
-                <span v-if="entry.byUserId"> • {{ getUserDisplayName(entry.byUserId) }}</span>
+            <!-- Mode visualisation -->
+            <template v-if="editingHistoryId !== entry.id">
+              <div class="note-meta" style="border-top: none; padding-top: 0; margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: flex-start;">
+                <div>
+                  <strong>{{ getRecetteStatusLabel(entry.status) }}</strong>
+                  <small>
+                    {{ formatDateTime(entry.createdAt) }}
+                    <span v-if="entry.byUserId"> • {{ getUserDisplayName(entry.byUserId) }}</span>
+                  </small>
+                </div>
+                <div style="display: flex; gap: 0.25rem; flex-shrink: 0; margin-left: 0.5rem;">
+                  <button type="button" class="btn btn-secondary btn-sm" @click="startEditHistory(entry)" title="Modifier">✏️</button>
+                  <button type="button" class="btn btn-danger btn-sm" @click="deleteHistoryEntry(entry.id)" title="Supprimer">🗑️</button>
+                </div>
+              </div>
+              <div v-if="entry.comment" class="note-content" style="white-space: pre-wrap;">{{ entry.comment }}</div>
+              <small style="color: #666;">
+                Couverture: {{ entry.checkedCriteria || 0 }}/{{ entry.totalCriteria || 0 }}
+                <span v-if="entry.coveragePercent !== undefined"> ({{ entry.coveragePercent }}%)</span>
               </small>
-            </div>
-            <div v-if="entry.comment" class="note-content" style="white-space: pre-wrap;">{{ entry.comment }}</div>
-            <small style="color: #666;">
-              Couverture: {{ entry.checkedCriteria || 0 }}/{{ entry.totalCriteria || 0 }}
-              <span v-if="entry.coveragePercent !== undefined"> ({{ entry.coveragePercent }}%)</span>
-            </small>
+            </template>
+            <!-- Mode édition inline -->
+            <template v-else>
+              <div style="margin-bottom: 0.5rem;">
+                <label style="font-size:0.85rem;color:#666;display:block;margin-bottom:0.25rem;">Statut</label>
+                <select v-model="editingHistoryForm.status" style="width:100%;padding:0.375rem 0.5rem;border:1px solid #ced4da;border-radius:4px;">
+                  <option value="pending">🔁 À retester</option>
+                  <option value="ready_for_test">🧾 Prêt à tester</option>
+                  <option value="in_test">🧪 En test</option>
+                  <option value="blocked">🚧 Bloqué</option>
+                  <option value="validated">✅ Validé</option>
+                  <option value="rejected">❌ Rejeté</option>
+                </select>
+              </div>
+              <div style="margin-bottom: 0.5rem;">
+                <label style="font-size:0.85rem;color:#666;display:block;margin-bottom:0.25rem;">Commentaire</label>
+                <textarea v-model="editingHistoryForm.comment" rows="2" style="width:100%;padding:0.375rem 0.5rem;border:1px solid #ced4da;border-radius:4px;"></textarea>
+              </div>
+              <div style="display: flex; gap: 0.5rem;">
+                <button type="button" class="btn btn-primary btn-sm" @click="saveHistoryEntry(entry.id)">💾 Enregistrer</button>
+                <button type="button" class="btn btn-secondary btn-sm" @click="cancelEditHistory">Annuler</button>
+              </div>
+            </template>
           </div>
         </div>
 
@@ -776,6 +807,9 @@ export default {
         comment: ''
       },
       savingRecette: false,
+      recetteSaved: false,
+      editingHistoryId: null,
+      editingHistoryForm: { comment: '', status: '' },
       userStoryForm: {
         title: '',
         description: '',
@@ -1291,6 +1325,7 @@ export default {
     },
     setRecetteStatus(status) {
       this.recetteForm.status = status
+      this.saveRecette()
     },
     async saveRecette() {
       if (!this.ticket?.id) return
@@ -1330,12 +1365,73 @@ export default {
         })
 
         await this.loadTicket()
-        alert('✅ Recette enregistrée')
+        this.recetteSaved = true
+        setTimeout(() => { this.recetteSaved = false }, 2500)
       } catch (error) {
         console.error('Erreur enregistrement recette:', error)
         alert(`❌ ${error.message || 'Erreur lors de l\'enregistrement de la recette'}`)
       } finally {
         this.savingRecette = false
+      }
+    },
+    async saveComment() {
+      if (!this.ticket?.id) return
+      this.savingRecette = true
+      try {
+        await db.updateTicket(this.ticket.id, {
+          recetteComment: this.recetteForm.comment || ''
+        })
+        await this.loadTicket()
+        this.recetteSaved = true
+        setTimeout(() => { this.recetteSaved = false }, 2500)
+      } catch (error) {
+        console.error('Erreur sauvegarde commentaire:', error)
+        alert(`❌ ${error.message || 'Erreur lors de la sauvegarde du commentaire'}`)
+      } finally {
+        this.savingRecette = false
+      }
+    },
+    startEditHistory(entry) {
+      this.editingHistoryId = entry.id
+      this.editingHistoryForm = {
+        comment: entry.comment || '',
+        status: entry.status || 'pending'
+      }
+    },
+    cancelEditHistory() {
+      this.editingHistoryId = null
+      this.editingHistoryForm = { comment: '', status: '' }
+    },
+    async saveHistoryEntry(entryId) {
+      if (!this.ticket?.id) return
+      const history = (this.ticket.recetteHistory || []).map(entry => {
+        if (Number(entry.id) === Number(entryId)) {
+          return {
+            ...entry,
+            status: this.editingHistoryForm.status || entry.status,
+            comment: this.editingHistoryForm.comment,
+            updatedAt: new Date().toISOString()
+          }
+        }
+        return entry
+      })
+      try {
+        await db.updateTicket(this.ticket.id, { recetteHistory: history })
+        await this.loadTicket()
+        this.cancelEditHistory()
+      } catch (error) {
+        alert(`❌ ${error.message || 'Erreur lors de la modification'}`)
+      }
+    },
+    async deleteHistoryEntry(entryId) {
+      if (!confirm('Supprimer cette entrée de l\'historique ?')) return
+      if (!this.ticket?.id) return
+      const history = (this.ticket.recetteHistory || []).filter(entry => Number(entry.id) !== Number(entryId))
+      try {
+        await db.updateTicket(this.ticket.id, { recetteHistory: history })
+        await this.loadTicket()
+      } catch (error) {
+        alert(`❌ ${error.message || 'Erreur lors de la suppression'}`)
       }
     },
     async addUserStory() {

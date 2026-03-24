@@ -65,6 +65,72 @@
               </div>
             </div>
           </div>
+
+          <!-- Section changement de statut de recette -->
+          <div class="recette-actions-section">
+            <h4>🔄 Mettre à jour le statut de recette</h4>
+            <div style="margin-bottom: 0.75rem;">
+              <textarea
+                :value="statusCommentByTicketId[ticket.id] || ''"
+                @input="statusCommentByTicketId = { ...statusCommentByTicketId, [ticket.id]: $event.target.value }"
+                rows="2"
+                placeholder="Commentaire (optionnel)..."
+                class="public-textarea"
+              ></textarea>
+            </div>
+            <div class="status-buttons-row">
+              <button class="btn-recette btn-recette-secondary" @click="updateTicketStatus(ticket, 'ready_for_test')" :disabled="savingStatusKeys[ticket.id]" :style="ticket.recetteStatus === 'ready_for_test' ? 'font-weight:bold;box-shadow:inset 0 0 0 2px rgba(0,0,0,0.3)' : ''">🧾 Prêt à tester</button>
+              <button class="btn-recette btn-recette-secondary" @click="updateTicketStatus(ticket, 'in_test')" :disabled="savingStatusKeys[ticket.id]" :style="ticket.recetteStatus === 'in_test' ? 'font-weight:bold;box-shadow:inset 0 0 0 2px rgba(0,0,0,0.3)' : ''">🧪 En test</button>
+              <button class="btn-recette btn-recette-warning" @click="updateTicketStatus(ticket, 'blocked')" :disabled="savingStatusKeys[ticket.id]" :style="ticket.recetteStatus === 'blocked' ? 'font-weight:bold;box-shadow:inset 0 0 0 2px rgba(0,0,0,0.3)' : ''">🚧 Bloqué</button>
+              <button class="btn-recette btn-recette-success" @click="updateTicketStatus(ticket, 'validated')" :disabled="savingStatusKeys[ticket.id]" :style="ticket.recetteStatus === 'validated' ? 'font-weight:bold;box-shadow:inset 0 0 0 2px rgba(0,0,0,0.3)' : ''">✅ Validé</button>
+              <button class="btn-recette btn-recette-danger" @click="updateTicketStatus(ticket, 'rejected')" :disabled="savingStatusKeys[ticket.id]" :style="ticket.recetteStatus === 'rejected' ? 'font-weight:bold;box-shadow:inset 0 0 0 2px rgba(0,0,0,0.3)' : ''">❌ Rejeté</button>
+              <button class="btn-recette btn-recette-secondary" @click="updateTicketStatus(ticket, 'pending')" :disabled="savingStatusKeys[ticket.id]" :style="ticket.recetteStatus === 'pending' ? 'font-weight:bold;box-shadow:inset 0 0 0 2px rgba(0,0,0,0.3)' : ''">🔁 À retester</button>
+              <span v-if="savingStatusKeys[ticket.id]" style="color:#6c757d;font-size:0.85rem;">⏳...</span>
+              <span v-if="statusSavedKeys[ticket.id]" style="color:#28a745;font-size:0.85rem;font-weight:500;">✓ Enregistré</span>
+            </div>
+          </div>
+
+          <!-- Historique de recette -->
+          <div v-if="ticket.recetteHistory && ticket.recetteHistory.length > 0" class="history-section">
+            <h4>🕓 Historique de recette</h4>
+            <div v-for="entry in ticket.recetteHistory" :key="entry.id" class="history-entry">
+              <template v-if="!isEditingHistoryPublic(ticket.id, entry.id)">
+                <div class="history-header">
+                  <div>
+                    <strong>{{ getRecetteStatusLabel(entry.status) }}</strong><br>
+                    <small>{{ formatDateTime(entry.createdAt) }}</small>
+                  </div>
+                  <div class="history-actions">
+                    <button class="btn-icon" @click="startEditHistoryPublic(ticket, entry)" title="Modifier">✏️</button>
+                    <button class="btn-icon btn-icon-danger" @click="deleteHistoryPublic(ticket, entry.id)" title="Supprimer">🗑️</button>
+                  </div>
+                </div>
+                <div v-if="entry.comment" class="history-comment">{{ entry.comment }}</div>
+                <small style="color:#999;">Couverture : {{ entry.checkedCriteria || 0 }}/{{ entry.totalCriteria || 0 }}{{ entry.coveragePercent !== undefined ? ` (${entry.coveragePercent}%)` : '' }}</small>
+              </template>
+              <template v-else>
+                <div style="margin-bottom:0.5rem;">
+                  <label class="public-label">Statut</label>
+                  <select v-model="editingPublicHistoryForm.status" class="public-select">
+                    <option value="pending">🔁 À retester</option>
+                    <option value="ready_for_test">🧾 Prêt à tester</option>
+                    <option value="in_test">🧪 En test</option>
+                    <option value="blocked">🚧 Bloqué</option>
+                    <option value="validated">✅ Validé</option>
+                    <option value="rejected">❌ Rejeté</option>
+                  </select>
+                </div>
+                <div style="margin-bottom:0.5rem;">
+                  <label class="public-label">Commentaire</label>
+                  <textarea v-model="editingPublicHistoryForm.comment" rows="2" class="public-textarea" placeholder="Commentaire..."></textarea>
+                </div>
+                <div style="display:flex;gap:0.5rem;">
+                  <button class="btn-recette btn-recette-success" @click="saveHistoryPublic(ticket, entry.id)">💾 Enregistrer</button>
+                  <button class="btn-recette btn-recette-secondary" @click="cancelEditHistoryPublic">Annuler</button>
+                </div>
+              </template>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -86,7 +152,12 @@ export default {
       allTickets: [],
       loading: true,
       error: null,
-      savingCriteriaKeys: {}
+      savingCriteriaKeys: {},
+      statusCommentByTicketId: {},
+      savingStatusKeys: {},
+      statusSavedKeys: {},
+      editingPublicHistoryKey: null,
+      editingPublicHistoryForm: { comment: '', status: '' }
     }
   },
   computed: {
@@ -197,6 +268,94 @@ export default {
         const next = { ...this.savingCriteriaKeys }
         delete next[key]
         this.savingCriteriaKeys = next
+      }
+    },
+    async updateTicketStatus(ticket, status) {
+      const token = this.$route.params.token
+      const comment = this.statusCommentByTicketId[ticket.id] || ''
+      this.savingStatusKeys = { ...this.savingStatusKeys, [ticket.id]: true }
+      try {
+        const response = await fetch(
+          `${getApiBaseUrl()}/public/recette/${encodeURIComponent(String(token || ''))}/tickets/${ticket.id}/status`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status, comment })
+          }
+        )
+        const body = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(body?.error || 'Échec de la mise à jour du statut')
+        const idx = this.allTickets.findIndex(t => Number(t.id) === Number(ticket.id))
+        if (idx >= 0) this.allTickets.splice(idx, 1, body)
+        this.statusCommentByTicketId = { ...this.statusCommentByTicketId, [ticket.id]: '' }
+        this.statusSavedKeys = { ...this.statusSavedKeys, [ticket.id]: true }
+        setTimeout(() => {
+          const next = { ...this.statusSavedKeys }
+          delete next[ticket.id]
+          this.statusSavedKeys = next
+        }, 2500)
+      } catch (err) {
+        alert(`❌ ${err?.message || 'Erreur lors de la mise à jour'}`)
+      } finally {
+        const next = { ...this.savingStatusKeys }
+        delete next[ticket.id]
+        this.savingStatusKeys = next
+      }
+    },
+    isEditingHistoryPublic(ticketId, entryId) {
+      return this.editingPublicHistoryKey === (ticketId + ':' + entryId)
+    },
+    startEditHistoryPublic(ticket, entry) {
+      this.editingPublicHistoryKey = ticket.id + ':' + entry.id
+      this.editingPublicHistoryForm = {
+        comment: entry.comment || '',
+        status: entry.status || 'pending'
+      }
+    },
+    cancelEditHistoryPublic() {
+      this.editingPublicHistoryKey = null
+      this.editingPublicHistoryForm = { comment: '', status: '' }
+    },
+    async saveHistoryPublic(ticket, historyId) {
+      const token = this.$route.params.token
+      try {
+        const response = await fetch(
+          `${getApiBaseUrl()}/public/recette/${encodeURIComponent(String(token || ''))}/tickets/${ticket.id}/history/${historyId}/update`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              status: this.editingPublicHistoryForm.status,
+              comment: this.editingPublicHistoryForm.comment
+            })
+          }
+        )
+        const body = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(body?.error || 'Échec de la modification')
+        const idx = this.allTickets.findIndex(t => Number(t.id) === Number(ticket.id))
+        if (idx >= 0) this.allTickets.splice(idx, 1, body)
+        this.cancelEditHistoryPublic()
+      } catch (err) {
+        alert(`❌ ${err?.message || 'Erreur lors de la modification'}`)
+      }
+    },
+    async deleteHistoryPublic(ticket, historyId) {
+      if (!confirm('Supprimer cette entrée de l\'historique ?')) return
+      const token = this.$route.params.token
+      try {
+        const response = await fetch(
+          `${getApiBaseUrl()}/public/recette/${encodeURIComponent(String(token || ''))}/tickets/${ticket.id}/history/${historyId}/delete`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+          }
+        )
+        const body = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(body?.error || 'Échec de la suppression')
+        const idx = this.allTickets.findIndex(t => Number(t.id) === Number(ticket.id))
+        if (idx >= 0) this.allTickets.splice(idx, 1, body)
+      } catch (err) {
+        alert(`❌ ${err?.message || 'Erreur lors de la suppression'}`)
       }
     },
     getCoverageStat(ticket) {
@@ -451,4 +610,142 @@ export default {
   border-radius: 0 0 8px 8px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
 }
+
+.recette-actions-section {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid #e9ecef;
+}
+
+.recette-actions-section h4 {
+  margin: 0 0 0.75rem 0;
+  color: #1976d2;
+  font-size: 0.95rem;
+}
+
+.status-buttons-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.btn-recette {
+  padding: 0.35rem 0.75rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: opacity 0.15s, box-shadow 0.15s;
+}
+
+.btn-recette:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-recette-secondary {
+  background: #6c757d;
+  color: white;
+}
+
+.btn-recette-warning {
+  background: #ffc107;
+  color: #333;
+}
+
+.btn-recette-success {
+  background: #198754;
+  color: white;
+}
+
+.btn-recette-danger {
+  background: #dc3545;
+  color: white;
+}
+
+.public-textarea {
+  width: 100%;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.public-select {
+  width: 100%;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.public-label {
+  font-size: 0.85rem;
+  color: #666;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.history-section {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid #e9ecef;
+}
+
+.history-section h4 {
+  margin: 0 0 0.75rem 0;
+  color: #555;
+  font-size: 0.95rem;
+}
+
+.history-entry {
+  background: #f8f9fa;
+  border-radius: 6px;
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+  border-left: 3px solid #dee2e6;
+}
+
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.4rem;
+}
+
+.history-actions {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.btn-icon {
+  background: #e9ecef;
+  border: none;
+  border-radius: 4px;
+  padding: 0.2rem 0.4rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+  transition: background 0.15s;
+}
+
+.btn-icon:hover {
+  background: #dee2e6;
+}
+
+.btn-icon-danger:hover {
+  background: #f8d7da;
+}
+
+.history-comment {
+  color: #555;
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+  margin-bottom: 0.25rem;
+}
+
 </style>

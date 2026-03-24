@@ -617,6 +617,117 @@ async function updatePublicRecetteCriterion(token, ticketId, payload) {
   return mapTicket(updateResult.rows[0])
 }
 
+async function updatePublicRecetteStatus(token, ticketId, payload) {
+  const project = await getProjectByRecetteToken(token)
+  const normalizedTicketId = Number(ticketId)
+  if (!Number.isFinite(normalizedTicketId) || normalizedTicketId <= 0) {
+    throw makeError('Ticket invalide', 400)
+  }
+
+  const { status, comment } = payload || {}
+
+  const result = await query('SELECT * FROM tickets WHERE id = $1 AND project_id = $2 LIMIT 1', [normalizedTicketId, project.id])
+  if (!result.rows.length) {
+    throw makeError('Ticket introuvable pour ce lien de recette', 404)
+  }
+
+  const ticket = mapTicket(result.rows[0])
+  const history = Array.isArray(ticket.recetteHistory) ? [...ticket.recetteHistory] : []
+  history.unshift({
+    id: Date.now(),
+    status: status || 'pending',
+    comment: comment || '',
+    createdAt: new Date().toISOString(),
+    byUserId: null,
+    coveragePercent: 0,
+    checkedCriteria: 0,
+    totalCriteria: 0
+  })
+
+  const updateResult = await query(
+    `UPDATE tickets
+     SET recette_status = $1,
+         recette_comment = $2,
+         recette_date = NOW(),
+         recette_history = $3::jsonb,
+         updated_at = NOW()
+     WHERE id = $4
+     RETURNING *`,
+    [status || 'pending', comment || null, JSON.stringify(history), normalizedTicketId]
+  )
+
+  return mapTicket(updateResult.rows[0])
+}
+
+async function updatePublicHistoryEntry(token, ticketId, historyId, payload) {
+  const project = await getProjectByRecetteToken(token)
+  const normalizedTicketId = Number(ticketId)
+  if (!Number.isFinite(normalizedTicketId) || normalizedTicketId <= 0) {
+    throw makeError('Ticket invalide', 400)
+  }
+
+  const result = await query('SELECT * FROM tickets WHERE id = $1 AND project_id = $2 LIMIT 1', [normalizedTicketId, project.id])
+  if (!result.rows.length) {
+    throw makeError('Ticket introuvable', 404)
+  }
+
+  const ticket = mapTicket(result.rows[0])
+  const history = Array.isArray(ticket.recetteHistory) ? [...ticket.recetteHistory] : []
+  const normalizedHistoryId = Number(historyId)
+
+  const updatedHistory = history.map(entry => {
+    if (Number(entry.id) === normalizedHistoryId) {
+      return {
+        ...entry,
+        status: payload?.status !== undefined ? payload.status : entry.status,
+        comment: payload?.comment !== undefined ? payload.comment : entry.comment,
+        updatedAt: new Date().toISOString()
+      }
+    }
+    return entry
+  })
+
+  const updateResult = await query(
+    `UPDATE tickets
+     SET recette_history = $1::jsonb,
+         updated_at = NOW()
+     WHERE id = $2
+     RETURNING *`,
+    [JSON.stringify(updatedHistory), normalizedTicketId]
+  )
+
+  return mapTicket(updateResult.rows[0])
+}
+
+async function deletePublicHistoryEntry(token, ticketId, historyId) {
+  const project = await getProjectByRecetteToken(token)
+  const normalizedTicketId = Number(ticketId)
+  if (!Number.isFinite(normalizedTicketId) || normalizedTicketId <= 0) {
+    throw makeError('Ticket invalide', 400)
+  }
+
+  const result = await query('SELECT * FROM tickets WHERE id = $1 AND project_id = $2 LIMIT 1', [normalizedTicketId, project.id])
+  if (!result.rows.length) {
+    throw makeError('Ticket introuvable', 404)
+  }
+
+  const ticket = mapTicket(result.rows[0])
+  const history = Array.isArray(ticket.recetteHistory) ? [...ticket.recetteHistory] : []
+  const normalizedHistoryId = Number(historyId)
+  const updatedHistory = history.filter(entry => Number(entry.id) !== normalizedHistoryId)
+
+  const updateResult = await query(
+    `UPDATE tickets
+     SET recette_history = $1::jsonb,
+         updated_at = NOW()
+     WHERE id = $2
+     RETURNING *`,
+    [JSON.stringify(updatedHistory), normalizedTicketId]
+  )
+
+  return mapTicket(updateResult.rows[0])
+}
+
 async function deleteTicket(id) {
   await deleteRow('tickets', id)
   return true
@@ -1061,6 +1172,36 @@ app.post('/api/public/recette/:token/tickets/:ticketId/criteria', async (req, re
       throw makeError('Token manquant', 400)
     }
     res.json(await updatePublicRecetteCriterion(token, req.params.ticketId, req.body || {}))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/public/recette/:token/tickets/:ticketId/status', async (req, res, next) => {
+  try {
+    const token = String(req.params.token || '').trim()
+    if (!token) throw makeError('Token manquant', 400)
+    res.json(await updatePublicRecetteStatus(token, req.params.ticketId, req.body || {}))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/public/recette/:token/tickets/:ticketId/history/:historyId/update', async (req, res, next) => {
+  try {
+    const token = String(req.params.token || '').trim()
+    if (!token) throw makeError('Token manquant', 400)
+    res.json(await updatePublicHistoryEntry(token, req.params.ticketId, req.params.historyId, req.body || {}))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/public/recette/:token/tickets/:ticketId/history/:historyId/delete', async (req, res, next) => {
+  try {
+    const token = String(req.params.token || '').trim()
+    if (!token) throw makeError('Token manquant', 400)
+    res.json(await deletePublicHistoryEntry(token, req.params.ticketId, req.params.historyId))
   } catch (error) {
     next(error)
   }
