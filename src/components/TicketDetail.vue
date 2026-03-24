@@ -816,12 +816,14 @@ export default {
       }
     },
     canValidateRecette() {
-      return (
-        this.recetteCoverage.storiesTotal > 0 &&
-        this.recetteCoverage.storiesDone === this.recetteCoverage.storiesTotal &&
-        this.recetteCoverage.total > 0 &&
-        this.recetteCoverage.checked === this.recetteCoverage.total
-      )
+      // Pas de stories → on peut valider
+      if (this.recetteCoverage.storiesTotal === 0) return true
+      // Stories présentes : toutes doivent être en "done"
+      if (this.recetteCoverage.storiesDone < this.recetteCoverage.storiesTotal) return false
+      // Pas de critères → OK
+      if (this.recetteCoverage.total === 0) return true
+      // Critères présents : tous doivent être cochés
+      return this.recetteCoverage.checked === this.recetteCoverage.total
     },
     odooConfigured() {
       return odooService.isConfigured()
@@ -1294,8 +1296,10 @@ export default {
       if (!this.ticket?.id) return
 
       if (this.recetteForm.status === 'validated' && !this.canValidateRecette) {
-        alert('Validation impossible : toutes les user stories doivent être terminées et tous les critères d\'acceptation cochés.')
-        return
+        const proceed = confirm(
+          'Attention : toutes les user stories ne sont pas terminées ou tous les critères ne sont pas cochés.\n\nVoulez-vous quand même valider la recette ?'
+        )
+        if (!proceed) return
       }
 
       if (this.recetteForm.status === 'rejected' && !this.recetteForm.comment?.trim()) {
