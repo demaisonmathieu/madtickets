@@ -26,6 +26,7 @@ const projectFields = {
   chiffrageEnabled: 'chiffrage_enabled',
   tjm: 'tjm',
   hoursPerDay: 'hours_per_day',
+  recetteShareToken: 'recette_share_token',
   createdAt: 'created_at',
   updatedAt: 'updated_at',
 }
@@ -195,6 +196,7 @@ function mapProject(row) {
     chiffrageEnabled: row.chiffrage_enabled,
     tjm: row.tjm !== null ? Number(row.tjm) : null,
     hoursPerDay: row.hours_per_day !== null ? Number(row.hours_per_day) : null,
+    recetteShareToken: row.recette_share_token || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
