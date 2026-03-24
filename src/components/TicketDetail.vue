@@ -399,7 +399,7 @@
               <button type="button" class="btn btn-secondary btn-sm" @click="exportRecetteToXls">
                 📊 Exporter le cahier de recette (.xls)
               </button>
-              <button v-if="ticket.recetteStatus && ticket.recetteStatus !== 'pending'" type="button" class="btn btn-primary btn-sm" @click="shareRecette" title="Générer un lien de partage publique pour cette recette">
+              <button type="button" class="btn btn-primary btn-sm" @click="shareRecette" title="Générer un lien de partage publique pour cette recette">
                 📤 Partager la recette
               </button>
             </div>
