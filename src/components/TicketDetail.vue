@@ -444,7 +444,7 @@
             </div>
 
             <small v-if="recetteForm.status === 'validated' && !canValidateRecette" style="display:block; color:#856404; margin-top:0.5rem;">
-              ⚠️ Pour valider: terminer toutes les user stories et cocher tous les critères d'acceptation.
+              ⚠️ Pour valider: terminer toutes les user stories et mettre tous les critères en OK.
             </small>
           </div>
         </div>
@@ -539,22 +539,74 @@
               <strong>Critères d'acceptation</strong>
               <div v-if="getStoryCriteria(story).length === 0" style="color:#999; margin-top: 0.25rem;">Aucun critère</div>
               <div v-else style="margin-top: 0.35rem; display:flex; flex-direction:column; gap:0.35rem;">
-                <label v-for="criterion in getStoryCriteria(story)" :key="criterion.id" style="display:flex; align-items:center; gap:0.5rem;">
-                  <input
-                    type="checkbox"
-                    :checked="criterion.checked"
-                    @change="toggleStoryCriterion(story.id, criterion.id, $event.target.checked)"
-                    style="width:auto;"
-                  />
-                  <span :style="criterion.checked ? 'text-decoration: line-through; color: #666;' : ''">{{ criterion.text }}</span>
-                  <button
-                    type="button"
-                    class="btn btn-danger btn-sm"
-                    @click="deleteStoryCriterion(story.id, criterion.id)"
-                    style="margin-left:auto;"
-                  >
-                    ✕
-                  </button>
+                <label v-for="criterion in getStoryCriteria(story)" :key="criterion.id" style="display:flex; flex-direction:column; align-items:stretch; gap:0.45rem;">
+                  <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <span
+                      :style="getCriterionResult(criterion) === 'ok' ? 'text-decoration: line-through; color: #666; flex:1;' : (getCriterionResult(criterion) === 'ko' ? 'color:#dc3545; font-weight:600; flex:1;' : 'flex:1;')"
+                    >
+                      {{ criterion.text }}
+                    </span>
+
+                    <label style="display:flex; align-items:center; gap:0.25rem; margin:0; font-size:0.85rem; color:#198754;">
+                      <input
+                        type="checkbox"
+                        :checked="getCriterionResult(criterion) === 'ok'"
+                        @change="setStoryCriterionResult(story.id, criterion.id, $event.target.checked ? 'ok' : null)"
+                        style="width:auto;"
+                      />
+                      OK
+                    </label>
+
+                    <label style="display:flex; align-items:center; gap:0.25rem; margin:0; font-size:0.85rem; color:#dc3545;">
+                      <input
+                        type="checkbox"
+                        :checked="getCriterionResult(criterion) === 'ko'"
+                        @change="setStoryCriterionResult(story.id, criterion.id, $event.target.checked ? 'ko' : null)"
+                        style="width:auto;"
+                      />
+                      KO
+                    </label>
+
+                    <button
+                      type="button"
+                      class="btn btn-danger btn-sm"
+                      @click="deleteStoryCriterion(story.id, criterion.id)"
+                      style="margin-left:auto;"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div style="display:flex; flex-direction:column; gap:0.35rem; margin-left:0.25rem;">
+                    <div v-if="criterion.attachments && criterion.attachments.length > 0" style="display:flex; flex-wrap:wrap; gap:0.35rem;">
+                      <div
+                        v-for="(attachment, aIdx) in criterion.attachments"
+                        :key="attachment.id || `criterion-att-${aIdx}`"
+                        class="attachment-item"
+                        style="cursor:pointer; padding:0.25rem 0.5rem;"
+                        @click="previewAttachment(attachment)"
+                      >
+                        <span>{{ getFileIcon(attachment.type || '') }}</span>
+                        <span class="attachment-name" style="max-width:160px;">{{ attachment.name }}</span>
+                        <button
+                          type="button"
+                          class="btn btn-danger btn-sm"
+                          style="margin-left:0.35rem;"
+                          @click.stop="removeCriterionAttachment(story.id, criterion.id, attachment.id)"
+                          title="Supprimer la pièce jointe"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </div>
+
+                    <input
+                      type="file"
+                      accept="image/*,.pdf,.doc,.docx,.txt,.xlsx,.xls,.zip"
+                      @change="handleCriterionAttachmentUpload(story.id, criterion.id, $event)"
+                      style="font-size:0.82rem;"
+                    />
+                  </div>
                 </label>
               </div>
 
@@ -837,7 +889,7 @@ export default {
     recetteCoverage() {
       const allCriteria = this.userStories.flatMap(story => this.getStoryCriteria(story))
       const total = allCriteria.length
-      const checked = allCriteria.filter(c => c.checked).length
+      const checked = allCriteria.filter(c => this.getCriterionResult(c) === 'ok').length
       const percent = total > 0 ? Math.round((checked / total) * 100) : 0
       const doneStories = this.userStories.filter(story => (story.status || 'todo') === 'done').length
 
@@ -856,7 +908,7 @@ export default {
       if (this.recetteCoverage.storiesDone < this.recetteCoverage.storiesTotal) return false
       // Pas de critères → OK
       if (this.recetteCoverage.total === 0) return true
-      // Critères présents : tous doivent être cochés
+      // Critères présents : tous doivent être en OK
       return this.recetteCoverage.checked === this.recetteCoverage.total
     },
     odooConfigured() {
@@ -1224,7 +1276,7 @@ export default {
           'Statut story': story.status || 'todo',
           'Critère ID': criterion.id || '',
           'Critère': criterion.text || '',
-          'Validé': criterion.checked ? 'Oui' : 'Non',
+          'Résultat': this.getCriterionResult(criterion) === 'ok' ? 'OK' : (this.getCriterionResult(criterion) === 'ko' ? 'KO' : 'Non évalué'),
           'Date validation': criterion.checkedAt ? this.formatDateTime(criterion.checkedAt) : '',
           'Validé par': criterion.checkedByUserId ? this.getUserDisplayName(criterion.checkedByUserId) : ''
         }))
@@ -1261,7 +1313,7 @@ export default {
         'Statut': story.status || 'todo',
         'Créée le': story.createdAt ? this.formatDateTime(story.createdAt) : '',
         'Critères total': this.getStoryCriteria(story).length,
-        'Critères validés': this.getStoryCriteria(story).filter(c => c.checked).length
+        'Critères OK': this.getStoryCriteria(story).filter(c => this.getCriterionResult(c) === 'ok').length
       }))
 
       const workbook = XLSX.utils.book_new()
@@ -1444,9 +1496,11 @@ export default {
         .map((text, index) => ({
           id: Date.now() + index,
           text,
+          result: null,
           checked: false,
           checkedAt: null,
-          checkedByUserId: null
+          checkedByUserId: null,
+          attachments: []
         }))
 
       const stories = [...(this.ticket.userStories || [])]
@@ -1504,12 +1558,19 @@ export default {
       return legacyLines.map((text, idx) => ({
         id: Number(`${story.id || Date.now()}${idx}`),
         text,
+        result: null,
         checked: false,
         checkedAt: null,
-        checkedByUserId: null
+        checkedByUserId: null,
+        attachments: []
       }))
     },
-    async toggleStoryCriterion(storyId, criterionId, checked) {
+    getCriterionResult(criterion) {
+      if (criterion?.result === 'ok' || criterion?.result === 'ko') return criterion.result
+      if (criterion?.checked === true) return 'ok'
+      return null
+    },
+    async setStoryCriterionResult(storyId, criterionId, result) {
       if (!this.ticket?.id) return
 
       const stories = (this.ticket.userStories || []).map(story => {
@@ -1518,17 +1579,92 @@ export default {
         const currentCriteria = this.getStoryCriteria(story)
         const nextCriteria = currentCriteria.map(criterion => {
           if (criterion.id !== criterionId) return criterion
+          const normalizedResult = result === 'ok' || result === 'ko' ? result : null
           return {
             ...criterion,
-            checked: !!checked,
-            checkedAt: checked ? new Date().toISOString() : null,
-            checkedByUserId: checked ? (this.currentUserId || null) : null
+            result: normalizedResult,
+            checked: normalizedResult === 'ok',
+            checkedAt: normalizedResult === 'ok' ? new Date().toISOString() : null,
+            checkedByUserId: normalizedResult === 'ok' ? (this.currentUserId || null) : null
           }
         })
 
         return {
           ...story,
           acceptanceCriteriaItems: nextCriteria,
+          updatedAt: new Date().toISOString()
+        }
+      })
+
+      await db.updateTicket(this.ticket.id, { userStories: stories })
+      await this.loadTicket()
+    },
+    async handleCriterionAttachmentUpload(storyId, criterionId, event) {
+      if (!this.ticket?.id) return
+      const files = Array.from(event?.target?.files || [])
+      if (!files.length) return
+
+      const maxSize = 5 * 1024 * 1024
+      let stories = [...(this.ticket.userStories || [])]
+
+      for (const file of files) {
+        if (file.size > maxSize) {
+          alert(`❌ Le fichier "${file.name}" dépasse 5MB`)
+          continue
+        }
+
+        try {
+          const base64 = await this.fileToBase64(file)
+          const attachment = {
+            id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            data: base64,
+            uploadedAt: new Date().toISOString()
+          }
+
+          stories = stories.map(story => {
+            if (story.id !== storyId) return story
+            const currentCriteria = this.getStoryCriteria(story)
+            return {
+              ...story,
+              acceptanceCriteriaItems: currentCriteria.map(criterion => {
+                if (criterion.id !== criterionId) return criterion
+                return {
+                  ...criterion,
+                  attachments: [...(criterion.attachments || []), attachment]
+                }
+              }),
+              updatedAt: new Date().toISOString()
+            }
+          })
+        } catch (error) {
+          console.error('Erreur upload pièce jointe critère:', error)
+          alert(`❌ Erreur lors de l'upload de "${file.name}"`)
+        }
+      }
+
+      await db.updateTicket(this.ticket.id, { userStories: stories })
+      await this.loadTicket()
+      if (event?.target) event.target.value = ''
+    },
+    async removeCriterionAttachment(storyId, criterionId, attachmentId) {
+      if (!this.ticket?.id) return
+      if (!confirm('Supprimer cette pièce jointe ?')) return
+
+      const stories = (this.ticket.userStories || []).map(story => {
+        if (story.id !== storyId) return story
+        const currentCriteria = this.getStoryCriteria(story)
+        return {
+          ...story,
+          acceptanceCriteriaItems: currentCriteria.map(criterion => {
+            if (criterion.id !== criterionId) return criterion
+            return {
+              ...criterion,
+              attachments: (criterion.attachments || []).filter(att => att.id !== attachmentId)
+            }
+          }),
           updatedAt: new Date().toISOString()
         }
       })
@@ -1553,9 +1689,11 @@ export default {
             {
               id: Date.now(),
               text: newText,
+              result: null,
               checked: false,
               checkedAt: null,
-              checkedByUserId: null
+              checkedByUserId: null,
+              attachments: []
             }
           ],
           updatedAt: new Date().toISOString()

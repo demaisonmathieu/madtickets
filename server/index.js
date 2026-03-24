@@ -548,7 +548,16 @@ async function updatePublicRecetteCriterion(token, ticketId, payload) {
 
   const storyId = payload?.storyId
   const criterionId = payload?.criterionId
-  const checked = Boolean(payload?.checked)
+  const hasResultUpdate = Object.prototype.hasOwnProperty.call(payload || {}, 'result') || Object.prototype.hasOwnProperty.call(payload || {}, 'checked')
+  const normalizedResult = payload?.result === 'ok' || payload?.result === 'ko'
+    ? payload.result
+    : (payload?.checked === true ? 'ok' : null)
+  const attachmentAdd = payload?.attachmentAdd && typeof payload.attachmentAdd === 'object'
+    ? payload.attachmentAdd
+    : null
+  const removeAttachmentId = payload?.removeAttachmentId !== undefined && payload?.removeAttachmentId !== null
+    ? String(payload.removeAttachmentId)
+    : null
 
   if (storyId === undefined || storyId === null || criterionId === undefined || criterionId === null) {
     throw makeError('Paramètres manquants pour la mise à jour du critère', 400)
@@ -579,7 +588,9 @@ async function updatePublicRecetteCriterion(token, ticketId, payload) {
       criteria = legacyLines.map((text, idx) => ({
         id: `${String(story?.id || 'story')}-${idx + 1}`,
         text,
+        result: null,
         checked: false,
+        attachments: [],
       }))
     }
 
@@ -588,9 +599,35 @@ async function updatePublicRecetteCriterion(token, ticketId, payload) {
         return criterion
       }
       criterionUpdated = true
+      let nextAttachments = Array.isArray(criterion?.attachments) ? [...criterion.attachments] : []
+
+      if (attachmentAdd && attachmentAdd.data && attachmentAdd.name) {
+        nextAttachments.push({
+          id: attachmentAdd.id || `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          name: attachmentAdd.name,
+          type: attachmentAdd.type || '',
+          size: Number(attachmentAdd.size || 0),
+          data: attachmentAdd.data,
+          uploadedAt: attachmentAdd.uploadedAt || new Date().toISOString(),
+        })
+      }
+
+      if (removeAttachmentId) {
+        nextAttachments = nextAttachments.filter(att => String(att?.id) !== removeAttachmentId)
+      }
+
+      const currentResult = criterion?.result === 'ok' || criterion?.result === 'ko'
+        ? criterion.result
+        : (criterion?.checked === true ? 'ok' : null)
+      const nextResult = hasResultUpdate ? normalizedResult : currentResult
+
       return {
         ...criterion,
-        checked,
+        result: nextResult,
+        checked: nextResult === 'ok',
+        checkedAt: hasResultUpdate ? (nextResult === 'ok' ? new Date().toISOString() : null) : (criterion?.checkedAt || null),
+        checkedByUserId: hasResultUpdate ? (nextResult === 'ok' ? (criterion?.checkedByUserId || null) : null) : (criterion?.checkedByUserId || null),
+        attachments: nextAttachments,
       }
     })
 
@@ -612,6 +649,66 @@ async function updatePublicRecetteCriterion(token, ticketId, payload) {
      WHERE id = $2
      RETURNING *`,
     [JSON.stringify(updatedStories), normalizedTicketId]
+  )
+
+  return mapTicket(updateResult.rows[0])
+}
+
+async function addPublicRecetteUserStory(token, ticketId, payload) {
+  const project = await getProjectByRecetteToken(token)
+  const normalizedTicketId = Number(ticketId)
+  if (!Number.isFinite(normalizedTicketId) || normalizedTicketId <= 0) {
+    throw makeError('Ticket invalide', 400)
+  }
+
+  const title = String(payload?.title || '').trim()
+  const description = String(payload?.description || '').trim()
+  const acceptanceCriteria = String(payload?.acceptanceCriteria || '').trim()
+
+  if (!title) {
+    throw makeError('Le titre de la user story est requis', 400)
+  }
+
+  const result = await query('SELECT * FROM tickets WHERE id = $1 AND project_id = $2 LIMIT 1', [normalizedTicketId, project.id])
+  if (!result.rows.length) {
+    throw makeError('Ticket introuvable pour ce lien de recette', 404)
+  }
+
+  const ticket = mapTicket(result.rows[0])
+  const stories = Array.isArray(ticket.userStories) ? [...ticket.userStories] : []
+
+  const criteriaItems = acceptanceCriteria
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map((text, index) => ({
+      id: Date.now() + index,
+      text,
+      result: null,
+      checked: false,
+      checkedAt: null,
+      checkedByUserId: null,
+      attachments: [],
+    }))
+
+  stories.push({
+    id: Date.now(),
+    title,
+    description,
+    acceptanceCriteria,
+    acceptanceCriteriaItems: criteriaItems,
+    status: 'todo',
+    createdAt: new Date().toISOString(),
+  })
+
+  const updateResult = await query(
+    `UPDATE tickets
+     SET user_stories = $1::jsonb,
+         recette_date = NOW(),
+         updated_at = NOW()
+     WHERE id = $2
+     RETURNING *`,
+    [JSON.stringify(stories), normalizedTicketId]
   )
 
   return mapTicket(updateResult.rows[0])
@@ -1187,21 +1284,11 @@ app.post('/api/public/recette/:token/tickets/:ticketId/status', async (req, res,
   }
 })
 
-app.post('/api/public/recette/:token/tickets/:ticketId/history/:historyId/update', async (req, res, next) => {
+app.post('/api/public/recette/:token/tickets/:ticketId/stories', async (req, res, next) => {
   try {
     const token = String(req.params.token || '').trim()
     if (!token) throw makeError('Token manquant', 400)
-    res.json(await updatePublicHistoryEntry(token, req.params.ticketId, req.params.historyId, req.body || {}))
-  } catch (error) {
-    next(error)
-  }
-})
-
-app.post('/api/public/recette/:token/tickets/:ticketId/history/:historyId/delete', async (req, res, next) => {
-  try {
-    const token = String(req.params.token || '').trim()
-    if (!token) throw makeError('Token manquant', 400)
-    res.json(await deletePublicHistoryEntry(token, req.params.ticketId, req.params.historyId))
+    res.json(await addPublicRecetteUserStory(token, req.params.ticketId, req.body || {}))
   } catch (error) {
     next(error)
   }
