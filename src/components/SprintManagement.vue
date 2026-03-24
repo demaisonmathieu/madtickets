@@ -162,7 +162,7 @@
               <div class="section-label" style="font-size: 0.8rem; color: #888; padding: 0.2rem 0;">✅ Tâches locales</div>
               <div v-for="task in getSprintLocalTasks(selectedSprint.id)" :key="'lt-' + task.id" class="ticket-row">
                 <span class="badge" :class="getStatusClass(task.status)">{{ getStatusLabel(task.status) }}</span>
-                <span class="clickable-ticket-title" @click.stop="editLocalTask(task.id)" style="cursor: pointer; color: #667eea;">✅ {{ task.title }}</span>
+                <span class="clickable-ticket-title" @click.stop="editLocalTask(task.id)" style="cursor: pointer;">✅ {{ task.title }}</span>
                 <button @click="editLocalTask(task.id)" class="btn-icon" title="Modifier la tâche">✏️</button>
                 <button @click="removeLocalTaskFromSprint(task.id)" class="btn-icon">✕</button>
               </div>
@@ -196,7 +196,7 @@
                       <h5
                         class="clickable-ticket-title"
                         @click.stop="ticket._isLocalTask ? editLocalTask(ticket.id) : viewTicket(ticket.id)"
-                        :style="ticket._isLocalTask ? 'cursor: pointer; color: #667eea;' : ''"
+                        :style="ticket._isLocalTask ? 'cursor: pointer;' : ''"
                       >{{ ticket._isLocalTask ? '✅ ' : '🎫 ' }}{{ ticket.title }}</h5>
                       <button
                         @click.stop="ticket._isLocalTask ? removeLocalTaskFromSprint(ticket.id) : removeTicketFromSprint(ticket.id)"
