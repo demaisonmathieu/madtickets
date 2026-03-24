@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS projects (
   status TEXT,
   assigned_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
   is_favorite BOOLEAN NOT NULL DEFAULT FALSE,
+  use_default_kanban_template BOOLEAN NOT NULL DEFAULT TRUE,
   kanban_columns JSONB NOT NULL DEFAULT '[]'::jsonb,
   odoo_id BIGINT,
   chiffrage_enabled BOOLEAN NOT NULL DEFAULT FALSE,
@@ -115,6 +116,7 @@ CREATE TABLE IF NOT EXISTS local_tasks (
 
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS gantt_assignments JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE local_tasks ADD COLUMN IF NOT EXISTS gantt_assignments JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS use_default_kanban_template BOOLEAN NOT NULL DEFAULT TRUE;
 
 CREATE TABLE IF NOT EXISTS odoo_tasks (
   id BIGSERIAL PRIMARY KEY,
@@ -160,3 +162,43 @@ CREATE INDEX IF NOT EXISTS idx_time_entries_date ON time_entries(date);
 CREATE INDEX IF NOT EXISTS idx_local_tasks_project_id ON local_tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_local_tasks_sprint_id ON local_tasks(sprint_id);
 CREATE INDEX IF NOT EXISTS idx_odoo_tasks_project_odoo_id ON odoo_tasks(project_odoo_id);
+
+-- ============================================================
+-- Étapes Kanban relationnelles (objet relationnel comme project.task.type dans Odoo)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS kanban_stages (
+  id BIGSERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  sequence INTEGER NOT NULL DEFAULT 10,
+  color TEXT NOT NULL DEFAULT '#cfe2ff',
+  folded BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Relation many-to-many : un projet peut avoir plusieurs étapes, une étape peut être partagée
+CREATE TABLE IF NOT EXISTS project_stage_rel (
+  project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  stage_id BIGINT NOT NULL REFERENCES kanban_stages(id) ON DELETE CASCADE,
+  sequence INTEGER NOT NULL DEFAULT 10,
+  PRIMARY KEY (project_id, stage_id)
+);
+
+-- Lien relationnel vers l'étape kanban sur les tickets et tâches locales
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS stage_id BIGINT REFERENCES kanban_stages(id) ON DELETE SET NULL;
+ALTER TABLE local_tasks ADD COLUMN IF NOT EXISTS stage_id BIGINT REFERENCES kanban_stages(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_kanban_stages_sequence ON kanban_stages(sequence);
+CREATE INDEX IF NOT EXISTS idx_project_stage_rel_project ON project_stage_rel(project_id);
+CREATE INDEX IF NOT EXISTS idx_tickets_stage_id ON tickets(stage_id);
+CREATE INDEX IF NOT EXISTS idx_local_tasks_stage_id ON local_tasks(stage_id);
+
+-- Permissions API (évite: "permission denied for table kanban_stages")
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'tickets_app') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE kanban_stages TO tickets_app;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE project_stage_rel TO tickets_app;
+    GRANT USAGE, SELECT ON SEQUENCE kanban_stages_id_seq TO tickets_app;
+  END IF;
+END $$;

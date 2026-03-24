@@ -133,6 +133,20 @@
                 </option>
               </select>
             </div>
+
+            <div class="form-group">
+              <label>✅ Ajouter une tâche locale</label>
+              <label style="display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; font-size: 0.9rem; color: #555;">
+                <input v-model="showLocalTasksFromOtherSprints" type="checkbox" />
+                Afficher les tâches déjà affectées à un autre sprint
+              </label>
+              <select v-model="localTaskToAdd" @change="addLocalTaskToSprint">
+                <option value="">Sélectionner une tâche locale...</option>
+                <option v-for="task in availableLocalTasks" :key="task.id" :value="task.id">
+                  {{ task.isAlreadyInAnotherSprint ? '⚠️ ' : '' }}{{ task.title }} ({{ getStatusLabel(task.status) }}){{ task.isAlreadyInAnotherSprint ? ` • déjà dans ${task.sprintName}` : '' }}
+                </option>
+              </select>
+            </div>
             
             <!-- Vue Liste -->
             <div v-if="ticketView === 'list' && getSprintTickets(selectedSprint.id).length > 0" class="ticket-list">
@@ -142,9 +156,20 @@
                 <button @click="removeTicketFromSprint(ticket.id)" class="btn-icon">✕</button>
               </div>
             </div>
+
+            <!-- Tâches locales en vue liste -->
+            <div v-if="ticketView === 'list' && getSprintLocalTasks(selectedSprint.id).length > 0" class="ticket-list" style="margin-top: 0.5rem;">
+              <div class="section-label" style="font-size: 0.8rem; color: #888; padding: 0.2rem 0;">✅ Tâches locales</div>
+              <div v-for="task in getSprintLocalTasks(selectedSprint.id)" :key="'lt-' + task.id" class="ticket-row">
+                <span class="badge" :class="getStatusClass(task.status)">{{ getStatusLabel(task.status) }}</span>
+                <span class="clickable-ticket-title" @click.stop="editLocalTask(task.id)" style="cursor: pointer; color: #667eea;">✅ {{ task.title }}</span>
+                <button @click="editLocalTask(task.id)" class="btn-icon" title="Modifier la tâche">✏️</button>
+                <button @click="removeLocalTaskFromSprint(task.id)" class="btn-icon">✕</button>
+              </div>
+            </div>
             
             <!-- Vue Kanban -->
-            <div v-if="ticketView === 'kanban' && getSprintTickets(selectedSprint.id).length > 0" class="sprint-kanban">
+            <div v-if="ticketView === 'kanban' && (getSprintTickets(selectedSprint.id).length > 0 || getSprintLocalTasks(selectedSprint.id).length > 0)" class="sprint-kanban">
               <!-- Colonnes personnalisées -->
               <div v-for="column in kanbanColumns" :key="column.id" class="kanban-column">
                 <div class="column-header" :style="{ backgroundColor: column.color }">
@@ -160,15 +185,23 @@
                 >
                   <div
                     v-for="ticket in getTicketsByStatus(column.id)"
-                    :key="ticket.id"
+                    :key="(ticket._isLocalTask ? 'lt-' : 'tk-') + ticket.id"
                     class="kanban-card"
+                    :class="{ 'kanban-card-local': ticket._isLocalTask }"
                     draggable="true"
                     @dragstart="onDragStart($event, ticket)"
                     @dragend="onDragEnd"
                   >
                     <div class="card-header">
-                      <h5 class="clickable-ticket-title" @click.stop="viewTicket(ticket.id)">{{ ticket.title }}</h5>
-                      <button @click="removeTicketFromSprint(ticket.id)" class="btn-icon-small">✕</button>
+                      <h5
+                        class="clickable-ticket-title"
+                        @click.stop="ticket._isLocalTask ? editLocalTask(ticket.id) : viewTicket(ticket.id)"
+                        :style="ticket._isLocalTask ? 'cursor: pointer; color: #667eea;' : ''"
+                      >{{ ticket._isLocalTask ? '✅ ' : '🎫 ' }}{{ ticket.title }}</h5>
+                      <button
+                        @click.stop="ticket._isLocalTask ? removeLocalTaskFromSprint(ticket.id) : removeTicketFromSprint(ticket.id)"
+                        class="btn-icon-small"
+                      >✕</button>
                     </div>
                     <div v-if="ticket.description" class="card-description" v-html="ticket.description"></div>
                     <div class="card-footer">
@@ -216,8 +249,8 @@
               </template>
             </div>
             
-            <div v-if="getSprintTickets(selectedSprint.id).length === 0" class="empty-state">
-              Aucun ticket associé à ce sprint.
+            <div v-if="getSprintTickets(selectedSprint.id).length === 0 && getSprintLocalTasks(selectedSprint.id).length === 0" class="empty-state">
+              Aucun ticket ou tâche locale associé à ce sprint.
             </div>
           </div>
 
@@ -293,11 +326,14 @@ export default {
       tickets: [],
       localTasks: [],
       users: [],
+      projectStages: [],
       showForm: false,
       editingSprint: null,
       selectedSprint: null,
       ticketToAdd: '',
+      localTaskToAdd: '',
       showTicketsFromOtherSprints: false,
+      showLocalTasksFromOtherSprints: false,
       newNote: '',
       editingNoteId: null,
       editingNoteContent: '',
@@ -306,6 +342,7 @@ export default {
       recognition: null,
       ticketView: 'kanban',
       draggedTicket: null,
+      draggedItem: null,
       form: {
         name: '',
         goal: '',
@@ -347,11 +384,38 @@ export default {
         return !ticket.isAlreadyAssignedToAnotherSprint
       })
     },
+    availableLocalTasksSource() {
+      return this.localTasks
+        .filter(t => !this.isCompletedTicketStatus(t.status))
+        .map(task => {
+          const isAlreadyInAnotherSprint = !!task.sprintId && task.sprintId !== this.selectedSprint?.id
+          return {
+            ...task,
+            isAlreadyInAnotherSprint,
+            sprintName: isAlreadyInAnotherSprint ? this.getSprintName(task.sprintId) : ''
+          }
+        })
+    },
+    availableLocalTasks() {
+      return this.availableLocalTasksSource.filter(task => {
+        if (this.showLocalTasksFromOtherSprints) return true
+        return !task.isAlreadyInAnotherSprint
+      })
+    },
+    useRelationalStages() {
+      return this.projectStages.length > 0
+    },
     kanbanColumns() {
+      if (this.useRelationalStages) {
+        return this.projectStages.map(s => ({
+          id: s.id.toString(),
+          label: s.name,
+          color: s.color || '#cfe2ff'
+        }))
+      }
       if (this.project?.kanbanColumns) {
         return this.project.kanbanColumns
       }
-      // Colonnes par défaut
       return [
         { id: 'todo', label: 'À faire', color: '#fff3cd' },
         { id: 'in-progress', label: 'En cours', color: '#cfe2ff' },
@@ -467,6 +531,7 @@ export default {
       this.tickets = await db.getTicketsByProject(this.projectId)
       this.localTasks = await db.getLocalTasksByProject(this.projectId)
       this.users = await db.getActiveUsers()
+      this.projectStages = await db.getStagesByProject(this.projectId)
     },
     async saveSprint() {
       try {
@@ -531,19 +596,40 @@ export default {
     viewTicket(ticketId) {
       this.$router.push(`/tickets/${ticketId}`)
     },
+    editLocalTask(taskId) {
+      this.$router.push(`/local-tasks/${taskId}`)
+    },
     getSprintName(sprintId) {
       const sprint = this.sprints.find(s => Number(s.id) === Number(sprintId))
       return sprint?.name || 'un autre sprint'
     },
     getSprintTickets(sprintId) {
-      return this.tickets.filter(t => t.sprintId === sprintId)
+      return this.tickets.filter(t => Number(t.sprintId) === Number(sprintId))
+    },
+    getSprintLocalTasks(sprintId) {
+      return this.localTasks.filter(t => Number(t.sprintId) === Number(sprintId))
     },
     getTicketsByStatus(status) {
       if (!this.selectedSprint) return []
-      return this.getSprintTickets(this.selectedSprint.id).filter(t => t.status === status)
+      const tickets = this.getSprintTickets(this.selectedSprint.id).filter(t => {
+        if (this.useRelationalStages) {
+          if (t.stageId != null) return String(t.stageId) === String(status)
+          return String(t.status) === String(status)
+        }
+        return String(t.status) === String(status)
+      })
+      const localTasks = this.getSprintLocalTasks(this.selectedSprint.id).filter(t => {
+        if (this.useRelationalStages) {
+          if (t.stageId != null) return String(t.stageId) === String(status)
+          return String(t.status) === String(status)
+        }
+        return String(t.status) === String(status)
+      }).map(lt => ({ ...lt, _isLocalTask: true }))
+      return [...tickets, ...localTasks]
     },
-    onDragStart(event, ticket) {
-      this.draggedTicket = ticket
+    onDragStart(event, item) {
+      this.draggedItem = item
+      this.draggedTicket = item._isLocalTask ? null : item
       event.dataTransfer.effectAllowed = 'move'
       event.target.classList.add('dragging')
     },
@@ -560,17 +646,24 @@ export default {
     onDragLeave(event) {
       event.currentTarget.classList.remove('drag-over')
     },
-    async onDrop(event, newStatus) {
+    async onDrop(event, newColId) {
       event.preventDefault()
       event.currentTarget.classList.remove('drag-over')
-      if (this.draggedTicket && this.draggedTicket.status !== newStatus) {
-        await db.updateTicket(this.draggedTicket.id, { status: newStatus })
+      if (this.draggedItem) {
+        const updates = { status: newColId }
+        if (this.useRelationalStages) updates.stageId = parseInt(newColId)
+        if (this.draggedItem._isLocalTask) {
+          await db.updateLocalTask(this.draggedItem.id, updates)
+        } else if (this.draggedTicket) {
+          await db.updateTicket(this.draggedTicket.id, updates)
+        }
         await this.loadData()
         if (this.selectedSprint) {
           this.selectedSprint = await db.getSprint(this.selectedSprint.id)
         }
       }
       this.draggedTicket = null
+      this.draggedItem = null
     },
     exportNoteToPDF(note, sprintName = null) {
       const title = sprintName || this.selectedSprint?.name || 'Compte rendu'
@@ -644,6 +737,17 @@ export default {
         this.ticketToAdd = ''
         this.selectedSprint = await db.getSprint(this.selectedSprint.id)
       }
+    },
+    async addLocalTaskToSprint() {
+      if (this.localTaskToAdd && this.selectedSprint) {
+        await db.updateLocalTask(parseInt(this.localTaskToAdd), { sprintId: this.selectedSprint.id })
+        await this.loadData()
+        this.localTaskToAdd = ''
+      }
+    },
+    async removeLocalTaskFromSprint(localTaskId) {
+      await db.updateLocalTask(localTaskId, { sprintId: null })
+      await this.loadData()
     },
     async removeTicketFromSprint(ticketId) {
       await db.updateTicket(ticketId, { sprintId: null })
@@ -750,7 +854,7 @@ export default {
     },
     getStatusLabel(status) {
       // Chercher dans les colonnes kanban du projet
-      const col = this.kanbanColumns.find(c => c.id === status)
+      const col = this.kanbanColumns.find(c => String(c.id) === String(status))
       if (col) return col.label
       const labels = {
         'planned': 'Planifié',
@@ -1196,6 +1300,15 @@ export default {
 .kanban-card.dragging {
   opacity: 0.5;
   transform: rotate(3deg);
+
+.kanban-card-local {
+  border-left: 3px solid #198754;
+  background: #f0fff4;
+}
+
+.kanban-card-local:hover {
+  background: #e6ffed;
+}
 }
 
 .kanban-card .card-header {

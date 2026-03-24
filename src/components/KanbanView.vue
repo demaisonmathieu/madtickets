@@ -134,6 +134,7 @@ export default {
     return {
       tickets: [],
       projects: [],
+      projectStages: [],
       filterProject: '',
       filterPriority: '',
       showForm: false,
@@ -161,12 +162,25 @@ export default {
       }
       return null
     },
+    // Indique si on est en mode étapes relationnelles (projet sélectionné avec stages)
+    useRelationalStages() {
+      return this.filterProject && this.projectStages.length > 0
+    },
     kanbanColumns() {
-      // Si un projet est sélectionné, utiliser ses colonnes
-      if (this.selectedProject?.kanbanColumns) {
+      // Priorité aux étapes relationnelles si disponibles
+      if (this.useRelationalStages) {
+        return this.projectStages.map(s => ({
+          id: s.id.toString(),
+          label: s.name,
+          color: s.color || '#cfe2ff',
+          folded: s.folded
+        }))
+      }
+      // Sinon : colonnes JSONB du projet
+      if (this.selectedProject?.kanbanColumns?.length) {
         return this.selectedProject.kanbanColumns
       }
-      // Sinon utiliser les colonnes par défaut
+      // Fallback par défaut
       return [
         { id: 'todo', label: 'À faire', color: '#fff3cd' },
         { id: 'in-progress', label: 'En cours', color: '#cfe2ff' },
@@ -191,10 +205,22 @@ export default {
   async mounted() {
     await this.loadData()
   },
+  watch: {
+    async filterProject(newProjectId) {
+      if (newProjectId) {
+        this.projectStages = await db.getStagesByProject(newProjectId)
+      } else {
+        this.projectStages = []
+      }
+    }
+  },
   methods: {
     async loadData() {
       this.tickets = await db.getAllTickets()
       this.projects = await db.getAllProjects()
+      if (this.filterProject) {
+        this.projectStages = await db.getStagesByProject(this.filterProject)
+      }
     },
     async saveTicket() {
       await db.addTicket({
@@ -236,12 +262,18 @@ export default {
     onDragLeave(event) {
       event.currentTarget.classList.remove('drag-over')
     },
-    async onDrop(event, newStatus) {
+    async onDrop(event, newColId) {
       event.preventDefault()
       event.currentTarget.classList.remove('drag-over')
-      if (this.draggedTicket && this.draggedTicket.status !== newStatus) {
-        await db.updateTicket(this.draggedTicket.id, { status: newStatus })
-        await this.loadData()
+      if (this.draggedTicket) {
+        const updates = { status: newColId }
+        if (this.useRelationalStages) {
+          updates.stageId = parseInt(newColId)
+        }
+        if (this.draggedTicket.status !== newColId || this.draggedTicket.stageId?.toString() !== newColId) {
+          await db.updateTicket(this.draggedTicket.id, updates)
+          await this.loadData()
+        }
       }
       this.draggedTicket = null
     },
@@ -249,8 +281,16 @@ export default {
       const project = this.projects.find(p => p.id === projectId)
       return project ? project.name : ''
     },
-    getTicketsByStatus(status) {
-      return this.filteredTickets.filter(t => t.status === status)
+    getTicketsByStatus(colId) {
+      return this.filteredTickets.filter(t => {
+        if (this.useRelationalStages) {
+          // Mode stages relationnelles : utiliser stageId en priorité
+          if (t.stageId != null) return t.stageId.toString() === colId
+          // Fallback : comparer le status avec le colId
+          return t.status === colId
+        }
+        return t.status === colId
+      })
     },
     truncateHtml(html, maxLength = 100) {
       if (!html) return ''

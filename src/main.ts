@@ -26,6 +26,8 @@ import PasswordManager from './components/PasswordManager.vue'
 import Login from './components/Login.vue'
 import UsersManagement from './components/UsersManagement.vue'
 import MenuConfiguration from './components/MenuConfiguration.vue'
+import KanbanStagesConfig from './components/KanbanStagesConfig.vue'
+import LocalTaskDetail from './components/LocalTaskDetail.vue'
 import { auth } from './services/auth'
 
 // Enregistrement du Service Worker désactivé en dev
@@ -65,8 +67,10 @@ const routes: RouteRecordRaw[] = [
   { path: '/tickets/:id', component: TicketDetail },
   { path: '/time-entries', component: TimeEntriesList },
   { path: '/kanban', component: KanbanView },
+  { path: '/kanban-stages', component: KanbanStagesConfig },
   { path: '/todos', component: TodoList },
   { path: '/todos/:id', component: TodoDetail },
+  { path: '/local-tasks/:id', component: LocalTaskDetail },
   { path: '/tasks', component: OdooTasksList },
   { path: '/tasks/:odooId', component: OdooTaskDetail },
   { path: '/taches', redirect: '/tasks' },

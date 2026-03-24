@@ -20,6 +20,7 @@ const projectFields = {
   status: 'status',
   assignedUserId: 'assigned_user_id',
   isFavorite: 'is_favorite',
+  useDefaultKanbanTemplate: 'use_default_kanban_template',
   kanbanColumns: 'kanban_columns',
   odooId: 'odoo_id',
   chiffrageEnabled: 'chiffrage_enabled',
@@ -38,6 +39,7 @@ const ticketFields = {
   priority: 'priority',
   startDate: 'start_date',
   estimatedTime: 'estimated_time',
+  stageId: 'stage_id',
   recetteStatus: 'recette_status',
   recetteComment: 'recette_comment',
   recetteDate: 'recette_date',
@@ -107,10 +109,21 @@ const odooTaskFields = {
   updatedAt: 'updated_at',
 }
 
+const kanbanStageFields = {
+  id: 'id',
+  name: 'name',
+  sequence: 'sequence',
+  color: 'color',
+  folded: 'folded',
+  createdAt: 'created_at',
+  updatedAt: 'updated_at',
+}
+
 const localTaskFields = {
   id: 'id',
   projectId: 'project_id',
   sprintId: 'sprint_id',
+  stageId: 'stage_id',
   title: 'title',
   description: 'description',
   status: 'status',
@@ -159,7 +172,7 @@ const jsonProjectFields = ['kanbanColumns']
 const jsonTicketFields = ['recetteHistory', 'notes', 'userStories', 'attachments', 'ganttAssignments']
 const jsonSprintFields = ['meetingNotes']
 const jsonLocalTaskFields = ['attachments', 'ganttAssignments']
-const sequenceTables = ['users', 'projects', 'sprints', 'tickets', 'todos', 'time_entries', 'local_tasks', 'odoo_tasks', 'passwords']
+const sequenceTables = ['users', 'projects', 'sprints', 'tickets', 'todos', 'time_entries', 'local_tasks', 'odoo_tasks', 'passwords', 'kanban_stages']
 
 function makeError(message, status = 400) {
   const error = new Error(message)
@@ -176,11 +189,24 @@ function mapProject(row) {
     status: row.status,
     assignedUserId: row.assigned_user_id ? Number(row.assigned_user_id) : null,
     isFavorite: row.is_favorite,
+    useDefaultKanbanTemplate: row.use_default_kanban_template !== false,
     kanbanColumns: row.kanban_columns || [],
     odooId: row.odoo_id ? Number(row.odoo_id) : null,
     chiffrageEnabled: row.chiffrage_enabled,
     tjm: row.tjm !== null ? Number(row.tjm) : null,
     hoursPerDay: row.hours_per_day !== null ? Number(row.hours_per_day) : null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function mapKanbanStage(row) {
+  return {
+    id: Number(row.id),
+    name: row.name,
+    sequence: Number(row.sequence || 10),
+    color: row.color || '#cfe2ff',
+    folded: row.folded || false,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -197,6 +223,7 @@ function mapTicket(row) {
     priority: row.priority,
     startDate: toDateString(row.start_date),
     estimatedTime: row.estimated_time !== null ? Number(row.estimated_time) : null,
+    stageId: row.stage_id ? Number(row.stage_id) : null,
     recetteStatus: row.recette_status,
     recetteComment: row.recette_comment,
     recetteDate: row.recette_date,
@@ -287,6 +314,7 @@ function mapLocalTask(row) {
     id: Number(row.id),
     projectId: Number(row.project_id),
     sprintId: row.sprint_id ? Number(row.sprint_id) : null,
+    stageId: row.stage_id ? Number(row.stage_id) : null,
     title: row.title,
     description: row.description,
     status: row.status,
@@ -663,6 +691,74 @@ async function deleteLocalTask(id) {
   return true
 }
 
+// ===== KANBAN STAGES =====
+async function getAllKanbanStages() {
+  const result = await query('SELECT * FROM kanban_stages ORDER BY sequence ASC, id ASC')
+  return result.rows.map(mapKanbanStage)
+}
+
+async function getKanbanStage(id) {
+  return getRowById('kanban_stages', id, mapKanbanStage)
+}
+
+async function addKanbanStage(stage) {
+  return insertRow(query, 'kanban_stages', kanbanStageFields, stage, mapKanbanStage)
+}
+
+async function updateKanbanStage(id, updates) {
+  return updateRow('kanban_stages', id, kanbanStageFields, updates, mapKanbanStage)
+}
+
+async function deleteKanbanStage(id) {
+  await query('UPDATE tickets SET stage_id = NULL WHERE stage_id = $1', [id])
+  await query('UPDATE local_tasks SET stage_id = NULL WHERE stage_id = $1', [id])
+  await query('DELETE FROM project_stage_rel WHERE stage_id = $1', [id])
+  await deleteRow('kanban_stages', id)
+  return true
+}
+
+async function getStagesByProject(projectId) {
+  const result = await query(
+    `SELECT ks.*, psr.sequence AS project_sequence
+     FROM kanban_stages ks
+     JOIN project_stage_rel psr ON psr.stage_id = ks.id
+     WHERE psr.project_id = $1
+     ORDER BY psr.sequence ASC, ks.sequence ASC, ks.id ASC`,
+    [projectId]
+  )
+  return result.rows.map(row => ({ ...mapKanbanStage(row), sequence: Number(row.project_sequence) }))
+}
+
+async function setProjectStages(projectId, stageItems) {
+  // stageItems: [{stageId, sequence}] ou [stageId, ...]
+  await withTransaction(async (client) => {
+    await client.query('DELETE FROM project_stage_rel WHERE project_id = $1', [projectId])
+    for (let i = 0; i < stageItems.length; i++) {
+      const item = stageItems[i]
+      const stageId = typeof item === 'object' ? item.stageId : item
+      const seq = typeof item === 'object' ? (item.sequence ?? (i + 1) * 10) : (i + 1) * 10
+      await client.query(
+        'INSERT INTO project_stage_rel (project_id, stage_id, sequence) VALUES ($1, $2, $3)',
+        [projectId, stageId, seq]
+      )
+    }
+  })
+  return true
+}
+
+async function addStageToProject(projectId, stageId, sequence = 10) {
+  await query(
+    'INSERT INTO project_stage_rel (project_id, stage_id, sequence) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+    [projectId, stageId, sequence]
+  )
+  return true
+}
+
+async function removeStageFromProject(projectId, stageId) {
+  await query('DELETE FROM project_stage_rel WHERE project_id = $1 AND stage_id = $2', [projectId, stageId])
+  return true
+}
+
 async function getAllPasswords() {
   const result = await query('SELECT * FROM passwords ORDER BY updated_at DESC, id DESC')
   return result.rows.map(mapPassword)
@@ -866,6 +962,15 @@ app.post('/api/rpc', async (req, res, next) => {
       case 'addLocalTask': res.json(await addLocalTask(params[0])); return
       case 'updateLocalTask': res.json(await updateLocalTask(params[0], params[1])); return
       case 'deleteLocalTask': res.json(await deleteLocalTask(params[0])); return
+      case 'getAllKanbanStages': res.json(await getAllKanbanStages()); return
+      case 'getKanbanStage': res.json(await getKanbanStage(params[0])); return
+      case 'addKanbanStage': res.json(await addKanbanStage(params[0])); return
+      case 'updateKanbanStage': res.json(await updateKanbanStage(params[0], params[1])); return
+      case 'deleteKanbanStage': res.json(await deleteKanbanStage(params[0])); return
+      case 'getStagesByProject': res.json(await getStagesByProject(params[0])); return
+      case 'setProjectStages': res.json(await setProjectStages(params[0], params[1] || [])); return
+      case 'addStageToProject': res.json(await addStageToProject(params[0], params[1], params[2])); return
+      case 'removeStageFromProject': res.json(await removeStageFromProject(params[0], params[1])); return
       case 'getAllPasswords': res.json(await getAllPasswords()); return
       case 'getPassword': res.json(await getPassword(params[0])); return
       case 'addPassword': res.json(await addPassword(params[0])); return

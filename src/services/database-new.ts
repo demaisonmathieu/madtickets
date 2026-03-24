@@ -2,7 +2,7 @@ import { openDB, IDBPDatabase } from 'idb';
 import { apiFetch } from './api';
 
 const DB_NAME = 'tickets-db';
-const DB_VERSION = 15;
+const DB_VERSION = 16;
 const SESSION_KEY = 'tickets.auth.session';
 
 // Types
@@ -10,6 +10,17 @@ export interface KanbanColumn {
   id: string;
   label: string;
   color: string;
+}
+
+// Étape Kanban relationnelle (comme project.task.type dans Odoo)
+export interface KanbanStage {
+  id?: number;
+  name: string;
+  sequence?: number;
+  color?: string;
+  folded?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Project {
@@ -20,6 +31,7 @@ export interface Project {
   assignedUserId?: number | null;
   followerUserIds?: number[];
   isFavorite?: boolean;
+  useDefaultKanbanTemplate?: boolean;
   kanbanColumns?: KanbanColumn[];
   odooId?: number;
   // Chiffrage pour les tâches locales
@@ -91,6 +103,7 @@ export interface Ticket {
   priority: string;
   startDate?: string | null;
   estimatedTime?: number | null;
+  stageId?: number | null;
   recetteStatus?: 'pending' | 'ready_for_test' | 'in_test' | 'blocked' | 'validated' | 'rejected';
   recetteComment?: string;
   recetteDate?: string;
@@ -171,6 +184,7 @@ export interface LocalTask {
   id?: number;
   projectId: number;
   sprintId?: number | null;
+  stageId?: number | null;
   title: string;
   description?: string;
   status: string;
@@ -288,6 +302,7 @@ class DatabaseService {
       ...project,
       assignedUserId: project.assignedUserId ?? null,
       followerUserIds: this.normalizeFollowerUserIds(project.followerUserIds, project.assignedUserId),
+      useDefaultKanbanTemplate: project.useDefaultKanbanTemplate !== false,
       kanbanColumns: project.kanbanColumns || DEFAULT_KANBAN_COLUMNS,
     };
   }
@@ -488,6 +503,17 @@ class DatabaseService {
           userStore.createIndex('role', 'role');
           userStore.createIndex('active', 'active');
         }
+
+        // Store pour les étapes Kanban relationnelles (nouveau en v16)
+        if (!db.objectStoreNames.contains('kanbanStages')) {
+          const stageStore = db.createObjectStore('kanbanStages', { keyPath: 'id', autoIncrement: true });
+          stageStore.createIndex('sequence', 'sequence');
+        }
+        // Store pour la relation projet <-> étape (nouveau en v16)
+        if (!db.objectStoreNames.contains('projectStageRel')) {
+          const relStore = db.createObjectStore('projectStageRel', { keyPath: ['projectId', 'stageId'] });
+          relStore.createIndex('projectId', 'projectId');
+        }
       }
     });
   }
@@ -509,6 +535,7 @@ class DatabaseService {
       assignedUserId: project.assignedUserId ?? null,
       followerUserIds: this.resolveProjectFollowerUserIds(project),
       isFavorite: project.isFavorite || false,
+      useDefaultKanbanTemplate: project.useDefaultKanbanTemplate !== false,
       kanbanColumns: project.kanbanColumns || DEFAULT_KANBAN_COLUMNS,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
@@ -1198,7 +1225,82 @@ class DatabaseService {
     await this.db!.delete('localTasks', id);
   }
 
-  // ===== EXPORT CHIFFRAGE =====
+  // ===== KANBAN STAGES =====
+  async getAllKanbanStages(): Promise<KanbanStage[]> {
+    const stages = await this.db!.getAll('kanbanStages');
+    return stages.sort((a, b) => (a.sequence ?? 10) - (b.sequence ?? 10));
+  }
+
+  async getKanbanStage(id: number): Promise<KanbanStage> {
+    return await this.db!.get('kanbanStages', id);
+  }
+
+  async addKanbanStage(stage: KanbanStage): Promise<IDBValidKey> {
+    return await this.db!.add('kanbanStages', {
+      ...stage,
+      sequence: stage.sequence ?? 10,
+      color: stage.color ?? '#cfe2ff',
+      folded: stage.folded ?? false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  async updateKanbanStage(id: number, updates: Partial<KanbanStage>): Promise<IDBValidKey> {
+    const existing = await this.getKanbanStage(id);
+    return await this.db!.put('kanbanStages', { ...existing, ...updates, id, updatedAt: new Date().toISOString() });
+  }
+
+  async deleteKanbanStage(id: number): Promise<void> {
+    // Dissocier les tickets
+    const allTickets = await this.db!.getAll('tickets');
+    for (const t of allTickets.filter((t: Ticket) => t.stageId === id)) {
+      await this.db!.put('tickets', { ...t, stageId: null });
+    }
+    const allLocalTasks = await this.db!.getAll('localTasks');
+    for (const lt of allLocalTasks.filter((lt: LocalTask) => lt.stageId === id)) {
+      await this.db!.put('localTasks', { ...lt, stageId: null });
+    }
+    // Supprimer les relations projet
+    const allRels = await this.db!.getAll('projectStageRel');
+    for (const rel of allRels.filter((r: { stageId: number }) => r.stageId === id)) {
+      await this.db!.delete('projectStageRel', [rel.projectId, rel.stageId]);
+    }
+    await this.db!.delete('kanbanStages', id);
+  }
+
+  async getStagesByProject(projectId: number): Promise<KanbanStage[]> {
+    const rels = await this.db!.getAllFromIndex('projectStageRel', 'projectId', projectId);
+    const stages: KanbanStage[] = [];
+    for (const rel of (rels as { projectId: number; stageId: number; sequence: number }[])) {
+      const stage = await this.db!.get('kanbanStages', rel.stageId);
+      if (stage) stages.push({ ...stage, sequence: rel.sequence });
+    }
+    return stages.sort((a, b) => (a.sequence ?? 10) - (b.sequence ?? 10));
+  }
+
+  async setProjectStages(projectId: number, stageItems: Array<number | { stageId: number; sequence?: number }>): Promise<void> {
+    // Supprimer les relations existantes pour ce projet
+    const existing = await this.db!.getAllFromIndex('projectStageRel', 'projectId', projectId);
+    for (const rel of existing) {
+      await this.db!.delete('projectStageRel', [(rel as { projectId: number; stageId: number }).projectId, (rel as { projectId: number; stageId: number }).stageId]);
+    }
+    // Ajouter les nouvelles
+    for (let i = 0; i < stageItems.length; i++) {
+      const item = stageItems[i];
+      const stageId = typeof item === 'object' ? item.stageId : item;
+      const seq = typeof item === 'object' ? (item.sequence ?? (i + 1) * 10) : (i + 1) * 10;
+      await this.db!.put('projectStageRel', { projectId, stageId, sequence: seq });
+    }
+  }
+
+  async addStageToProject(projectId: number, stageId: number, sequence = 10): Promise<void> {
+    await this.db!.put('projectStageRel', { projectId, stageId, sequence });
+  }
+
+  async removeStageFromProject(projectId: number, stageId: number): Promise<void> {
+    await this.db!.delete('projectStageRel', [projectId, stageId]);
+  }
   async exportChiffrage(projectId: number): Promise<{
     project: Project;
     tasks: LocalTask[];
@@ -1373,6 +1475,7 @@ class RemoteDatabaseService extends DatabaseService {
       assignedUserId: project.assignedUserId ?? null,
       followerUserIds: this.resolveProjectFollowerUserIds(project),
       isFavorite: project.isFavorite || false,
+      useDefaultKanbanTemplate: project.useDefaultKanbanTemplate !== false,
       kanbanColumns: project.kanbanColumns || DEFAULT_KANBAN_COLUMNS,
       createdAt: project.createdAt || now,
       updatedAt: project.updatedAt || now
@@ -1839,6 +1942,45 @@ class RemoteDatabaseService extends DatabaseService {
 
   async deleteLocalTask(id: number): Promise<void> {
     await this.rpc('deleteLocalTask', [id]);
+  }
+
+  // ===== KANBAN STAGES (Remote) =====
+  async getAllKanbanStages(): Promise<KanbanStage[]> {
+    return this.rpc<KanbanStage[]>('getAllKanbanStages');
+  }
+
+  async getKanbanStage(id: number): Promise<KanbanStage> {
+    return this.rpc<KanbanStage>('getKanbanStage', [id]);
+  }
+
+  async addKanbanStage(stage: KanbanStage): Promise<IDBValidKey> {
+    const created = await this.rpc<KanbanStage>('addKanbanStage', [stage]);
+    return this.extractId(created);
+  }
+
+  async updateKanbanStage(id: number, updates: Partial<KanbanStage>): Promise<IDBValidKey> {
+    const updated = await this.rpc<KanbanStage>('updateKanbanStage', [id, updates]);
+    return this.extractId(updated);
+  }
+
+  async deleteKanbanStage(id: number): Promise<void> {
+    await this.rpc('deleteKanbanStage', [id]);
+  }
+
+  async getStagesByProject(projectId: number): Promise<KanbanStage[]> {
+    return this.rpc<KanbanStage[]>('getStagesByProject', [projectId]);
+  }
+
+  async setProjectStages(projectId: number, stageItems: Array<number | { stageId: number; sequence?: number }>): Promise<void> {
+    await this.rpc('setProjectStages', [projectId, stageItems]);
+  }
+
+  async addStageToProject(projectId: number, stageId: number, sequence = 10): Promise<void> {
+    await this.rpc('addStageToProject', [projectId, stageId, sequence]);
+  }
+
+  async removeStageFromProject(projectId: number, stageId: number): Promise<void> {
+    await this.rpc('removeStageFromProject', [projectId, stageId]);
   }
 
   async exportChiffrage(projectId: number): Promise<{ project: Project; tasks: LocalTask[]; totalEstimatedTime: number; totalCost: number; }> {

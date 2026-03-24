@@ -36,6 +36,17 @@
           </button>
         </div>
 
+        <div style="margin-top: 1rem; padding: 0.75rem; background: #f8f9fa; border-radius: 8px;">
+          <label style="display: inline-flex; align-items: center; gap: 0.5rem;">
+            <input type="checkbox" v-model="project.useDefaultKanbanTemplate" style="width:auto;" />
+            Utiliser le modèle d'étapes Kanban par défaut
+          </label>
+          <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.6rem;">
+            <button class="btn btn-secondary btn-sm" @click="saveDefaultKanbanTemplatePreference">💾 Enregistrer la préférence</button>
+            <button class="btn btn-primary btn-sm" @click="applyDefaultKanbanTemplateNow">📊 Appliquer maintenant</button>
+          </div>
+        </div>
+
         <!-- Configuration du Chiffrage -->
         <div v-if="showChiffrageConfig" style="margin-top: 1.5rem; padding: 1.5rem; background: #f8f9fa; border-radius: 8px;">
           <h4>💰 Configuration du Chiffrage</h4>
@@ -75,8 +86,11 @@
         <!-- Éditeur de colonnes Kanban -->
         <div v-if="showKanbanEditor" style="margin-top: 1.5rem;">
           <KanbanColumnsEditor 
-            :columns="project.kanbanColumns || defaultColumns" 
+            ref="kanbanEditor"
+            :projectId="project.id"
+            :columns="effectiveColumns" 
             @update="updateKanbanColumns"
+            @saved="onKanbanSaved"
           />
           <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
             <button @click="saveKanbanColumns" class="btn btn-primary">💾 Enregistrer</button>
@@ -153,7 +167,7 @@
             <template v-if="ticketDisplayMode === 'list' && ticketSelectMode && selectedTicketIds.length > 0">
               <select v-model="bulkTicketStatus" style="padding: 0.4rem 0.6rem; border-radius: 4px; border: 1px solid #ccc; font-size: 0.875rem;">
                 <option value="">Changer statut...</option>
-                <option v-for="col in (project?.kanbanColumns || defaultColumns)" :key="col.id" :value="col.id">{{ col.label }}</option>
+                <option v-for="col in effectiveColumns" :key="col.id" :value="col.id">{{ col.label }}</option>
               </select>
               <button @click="applyBulkTicketStatus" :disabled="!bulkTicketStatus" class="btn btn-primary btn-sm">✓ Statut</button>
               <select v-model="bulkTicketPriority" style="padding: 0.4rem 0.6rem; border-radius: 4px; border: 1px solid #ccc; font-size: 0.875rem;">
@@ -207,7 +221,7 @@
             <div class="form-group">
               <label>Statut</label>
               <select v-model="ticketForm.status">
-                <option v-for="col in (project?.kanbanColumns || defaultColumns)" :key="col.id" :value="col.id">
+                <option v-for="col in effectiveColumns" :key="col.id" :value="col.id">
                   {{ col.label }}
                 </option>
               </select>
@@ -313,7 +327,7 @@
                 📋 Todo
               </button>
               <button
-                v-if="currentSprint && ticket.sprintId !== currentSprint.id"
+                v-if="effectiveCurrentSprint && ticket.sprintId !== effectiveCurrentSprint.id"
                 @click="addToCurrentSprint(ticket)"
                 class="btn btn-secondary btn-sm"
               >
@@ -519,6 +533,20 @@
           <div class="section-header">
             <h3>✅ Tâches Locales du projet</h3>
             <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+              <div class="view-toggle" style="margin-right: 0.25rem;">
+                <button
+                  @click="localTaskDisplayMode = 'list'"
+                  :class="['btn', 'btn-sm', localTaskDisplayMode === 'list' ? 'btn-primary' : 'btn-secondary']"
+                >
+                  📋 Liste
+                </button>
+                <button
+                  @click="localTaskDisplayMode = 'kanban'"
+                  :class="['btn', 'btn-sm', localTaskDisplayMode === 'kanban' ? 'btn-primary' : 'btn-secondary']"
+                >
+                  📊 Kanban
+                </button>
+              </div>
               <label style="display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; font-size: 0.875rem;">
                 <input type="checkbox" v-model="showCompletedLocalTasks" style="width: auto;" />
                 <span>Afficher terminés</span>
@@ -768,9 +796,7 @@
               <div class="form-group">
                 <label>Statut</label>
                 <select v-model="localTaskForm.status">
-                  <option value="todo">À faire</option>
-                  <option value="in-progress">En cours</option>
-                  <option value="done">Terminé</option>
+                  <option v-for="col in effectiveColumns" :key="col.id" :value="col.id">{{ col.label }}</option>
                 </select>
               </div>
               <div class="form-group">
@@ -786,8 +812,22 @@
                 <input v-model="localTaskForm.startDate" type="date" />
               </div>
               <div class="form-group">
+                <label style="display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; font-size: 0.9rem; color: #555;">
+                  <input
+                    type="checkbox"
+                    v-model="localTaskFormOptions.addToCurrentSprint"
+                    :disabled="!currentSprintForSelectedProject"
+                    @change="handleLocalTaskCurrentSprintToggle"
+                    style="width: auto;"
+                  />
+                  🏃 Ajouter au sprint en cours
+                  <span v-if="currentSprintForSelectedProject" style="color: #777;">({{ currentSprintForSelectedProject.name }})</span>
+                  <span v-else style="color: #999;">(aucun sprint actif)</span>
+                </label>
+              </div>
+              <div class="form-group">
                 <label>Sprint</label>
-                <select v-model="localTaskForm.sprintId">
+                <select v-model="localTaskForm.sprintId" :disabled="localTaskFormOptions.addToCurrentSprint">
                   <option :value="null">Aucun sprint</option>
                   <option v-for="sprint in sprints" :key="`lt-sprint-${sprint.id}`" :value="sprint.id">
                     {{ sprint.name }}
@@ -882,6 +922,7 @@
             <p style="text-align: center; color: #999;">Aucune tâche locale pour ce projet.</p>
           </div>
 
+          <template v-if="localTaskDisplayMode === 'list'">
           <div v-for="task in filteredLocalTasks" :key="`local-task-${task.id}`" class="card task-card" :class="{ 'selected': isLocalTaskSelected(task.id) }">
             <div class="ticket-header">
               <div style="display: flex; align-items: start; gap: 0.75rem; flex: 1;">
@@ -912,6 +953,13 @@
                 </div>
               </div>
               <div class="ticket-actions">
+                <button
+                  v-if="effectiveCurrentSprint && task.sprintId !== effectiveCurrentSprint.id"
+                  @click="addLocalTaskToCurrentSprint(task)"
+                  class="btn btn-secondary btn-sm"
+                >
+                  🏃 Ajouter au sprint
+                </button>
                 <button @click="editLocalTask(task)" class="btn btn-secondary btn-sm">✏️ Éditer</button>
                 <button @click="deleteLocalTaskConfirm(task)" class="btn btn-danger btn-sm">🗑️ Supprimer</button>
               </div>
@@ -936,6 +984,51 @@
               <small v-if="task.timeTotalMinutes" class="time-tag">• Temps: {{ formatDuration(task.timeTotalMinutes) }}</small>
             </div>
           </div>
+          </template>
+
+          <template v-else>
+            <div class="project-ticket-kanban">
+              <div
+                v-for="column in localTaskKanbanColumns"
+                :key="`project-local-col-${column.id}`"
+                class="project-ticket-kanban-column"
+                @dragover.prevent
+                @drop="onLocalTaskDrop(column.id)"
+              >
+                <div class="project-ticket-kanban-header" :style="{ backgroundColor: column.color || '#f1f3f5' }">
+                  <h4>{{ column.label }}</h4>
+                  <span class="count-badge">{{ getLocalTasksByKanbanStatus(column.id).length }}</span>
+                </div>
+
+                <div class="project-ticket-kanban-body">
+                  <div
+                    v-for="task in getLocalTasksByKanbanStatus(column.id)"
+                    :key="`project-local-card-${task.id}`"
+                    class="project-ticket-kanban-card"
+                    draggable="true"
+                    @dragstart="onLocalTaskDragStart(task.id)"
+                    @dragend="onLocalTaskDragEnd"
+                  >
+                    <div class="project-ticket-kanban-card-title">
+                      ✅ {{ task.title }}
+                    </div>
+                    <div class="project-ticket-kanban-card-meta">
+                      <span class="badge" :class="getPriorityClass(task.priority)">{{ getPriorityLabel(task.priority) }}</span>
+                      <span class="badge badge-info">👤 {{ getUserDisplayName(task.assignedUserId) }}</span>
+                    </div>
+                    <div style="display:flex; gap:0.35rem; margin-top:0.5rem;">
+                      <button @click.stop="editLocalTask(task)" class="btn btn-secondary btn-sm">✏️</button>
+                      <button @click.stop="deleteLocalTaskConfirm(task)" class="btn btn-danger btn-sm">🗑️</button>
+                    </div>
+                  </div>
+
+                  <div v-if="getLocalTasksByKanbanStatus(column.id).length === 0" class="project-ticket-kanban-empty">
+                    Aucune tâche locale
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
         </template>
 
         <template v-else-if="projectContentView === 'gantt'">
@@ -1124,7 +1217,9 @@ export default {
       showChiffrageConfig: false,
       showAiTaskGenerator: false,
       ticketDisplayMode: 'kanban',
+      localTaskDisplayMode: 'list',
       draggedTicketId: null,
+      draggedLocalTaskId: null,
       ticketSelectMode: false,
       selectedTicketIds: [],
       bulkTicketStatus: '',
@@ -1165,6 +1260,7 @@ export default {
         { id: 'in-progress', label: 'En cours', color: '#cfe2ff' },
         { id: 'done', label: 'Terminé', color: '#d1e7dd' }
       ],
+      projectStages: [], // étapes relationnelles (kanban_stages) du projet courant
       ticketForm: {
         title: '',
         description: '',
@@ -1189,6 +1285,9 @@ export default {
         estimatedTime: 0,
         attachments: []
       },
+      localTaskFormOptions: {
+        addToCurrentSprint: false
+      },
       ticketFormOptions: {
         addToTodo: false,
         addToCurrentSprint: false
@@ -1199,6 +1298,13 @@ export default {
     }
   },
   computed: {
+    // Colonnes Kanban effectives : priorité aux étapes relationnelles (kanban_stages),
+    // puis aux colonnes JSON du projet, puis aux colonnes par défaut
+    effectiveColumns() {
+      if (this.projectStages && this.projectStages.length > 0) return this.projectStages
+      if (this.project?.kanbanColumns?.length) return this.project.kanbanColumns
+      return this.defaultColumns
+    },
     filteredTickets() {
       const baseTickets = this.showCompletedTickets
         ? this.tickets
@@ -1215,12 +1321,10 @@ export default {
       })
     },
     ticketKanbanColumns() {
-      const baseColumns = this.project?.kanbanColumns?.length
-        ? this.project.kanbanColumns
-        : this.defaultColumns
+      const baseColumns = this.effectiveColumns
 
       const hasUnknownStatus = this.filteredTickets.some(ticket => {
-        return !baseColumns.some(col => col.id === ticket.status)
+        return !baseColumns.some(col => String(col.id) === String(ticket.status))
       })
 
       if (hasUnknownStatus) {
@@ -1249,6 +1353,20 @@ export default {
         ? this.localTasks
         : this.localTasks.filter(task => !this.isCompletedStatus(task.status))
     },
+    localTaskKanbanColumns() {
+      // Colonnes effectives : priorité aux étapes relationnelles, puis JSON, puis défaut
+      const baseColumns = this.effectiveColumns
+
+      const hasUnknownStatus = this.filteredLocalTasks.some(task => {
+        return !baseColumns.some(col => String(col.id) === String(task.status))
+      })
+
+      if (hasUnknownStatus) {
+        return [...baseColumns, { id: '__other__', label: 'Autres', color: '#f1f3f5' }]
+      }
+
+      return baseColumns
+    },
     todoByText() {
       const map = new Map()
       for (const todo of this.todos) {
@@ -1259,27 +1377,46 @@ export default {
       }
       return map
     },
-    currentSprint() {
-      const activeSprints = this.sprints.filter(s => s.status === 'active')
-      if (activeSprints.length === 0) return null
+    effectiveCurrentSprint() {
+      const now = new Date()
 
-      return activeSprints.sort((a, b) => {
-        const aDate = a.startDate ? new Date(a.startDate).getTime() : 0
-        const bDate = b.startDate ? new Date(b.startDate).getTime() : 0
-        return bDate - aDate
-      })[0]
+      const sortByStartDateDesc = list => {
+        return [...list].sort((a, b) => {
+          const aDate = a.startDate ? new Date(a.startDate).getTime() : 0
+          const bDate = b.startDate ? new Date(b.startDate).getTime() : 0
+          return bDate - aDate
+        })
+      }
+
+      const activeSprints = this.sprints.filter(s => s.status === 'active')
+      if (activeSprints.length > 0) {
+        return sortByStartDateDesc(activeSprints)[0]
+      }
+
+      const inDateRange = this.sprints.filter(s => {
+        if (s.status === 'completed') return false
+        if (!s.startDate || !s.endDate) return false
+        const start = new Date(s.startDate)
+        const end = new Date(s.endDate)
+        return start <= now && now <= end
+      })
+      if (inDateRange.length > 0) {
+        return sortByStartDateDesc(inDateRange)[0]
+      }
+
+      const nonCompleted = this.sprints.filter(s => s.status !== 'completed')
+      if (nonCompleted.length > 0) {
+        return sortByStartDateDesc(nonCompleted)[0]
+      }
+
+      return null
+    },
+    currentSprint() {
+      return this.effectiveCurrentSprint
     },
     currentSprintForSelectedProject() {
       if (!this.project) return null
-      
-      const activeSprints = this.sprints.filter(s => s.status === 'active')
-      if (activeSprints.length === 0) return null
-
-      return activeSprints.sort((a, b) => {
-        const aDate = a.startDate ? new Date(a.startDate).getTime() : 0
-        const bDate = b.startDate ? new Date(b.startDate).getTime() : 0
-        return bDate - aDate
-      })[0]
+      return this.effectiveCurrentSprint
     },
     odooConfigured() {
       return odooService.isConfigured()
@@ -1531,6 +1668,18 @@ export default {
           hoursPerDay: this.project.hoursPerDay || 8
         }
       }
+
+      // Charger les étapes Kanban relationnelles du projet
+      try {
+        const stages = await db.getStagesByProject(id)
+        this.projectStages = (stages || []).map(s => ({
+          id: String(s.id),
+          label: s.name || '',
+          color: s.color || '#cfe2ff'
+        }))
+      } catch (e) {
+        this.projectStages = []
+      }
     },
     async loadTickets() {
       const id = parseInt(this.$route.params.id)
@@ -1625,7 +1774,7 @@ export default {
       )
     },
     mapImportedOdooTicketStatusToProjectColumn(odooTask) {
-      const columns = this.project?.kanbanColumns || this.defaultColumns
+      const columns = this.effectiveColumns
       const stageName = String(odooTask.stageName || '').toLowerCase()
       const kanbanState = String(odooTask.rawKanbanState || '').toLowerCase()
       const remoteStageId = Number(odooTask.stageOdooId)
@@ -1880,10 +2029,59 @@ export default {
       }
     },
     async addToCurrentSprint(ticket) {
-      if (!this.currentSprint || !ticket?.id) return
+      if (!this.effectiveCurrentSprint || !ticket?.id) return
 
-      await db.updateTicket(ticket.id, { sprintId: this.currentSprint.id })
+      await db.updateTicket(ticket.id, { sprintId: this.effectiveCurrentSprint.id })
       await this.loadTickets()
+    },
+    async addLocalTaskToCurrentSprint(task) {
+      if (!this.effectiveCurrentSprint || !task?.id) return
+
+      await db.updateLocalTask(task.id, { sprintId: this.effectiveCurrentSprint.id })
+      await this.loadLocalTasks()
+    },
+    async saveDefaultKanbanTemplatePreference() {
+      if (!this.project?.id) return
+      await db.updateProject(this.project.id, {
+        useDefaultKanbanTemplate: this.project.useDefaultKanbanTemplate !== false
+      })
+      await this.loadProject()
+      alert('✅ Préférence Kanban enregistrée')
+    },
+    async applyDefaultKanbanTemplateNow() {
+      if (!this.project?.id) return
+      await this.applyDefaultKanbanTemplateToProject(this.project.id, true)
+      await this.loadProject()
+      alert('✅ Étapes Kanban par défaut appliquées')
+    },
+    async applyDefaultKanbanTemplateToProject(projectId, force = false) {
+      const defaultStages = [
+        { name: 'À faire', sequence: 10, color: '#fff3cd', folded: false },
+        { name: 'En cours', sequence: 20, color: '#cfe2ff', folded: false },
+        { name: 'Terminé', sequence: 30, color: '#d1e7dd', folded: false }
+      ]
+
+      if (!force) {
+        const existing = await db.getStagesByProject(projectId)
+        if ((existing || []).length > 0) return
+      }
+
+      const allStages = await db.getAllKanbanStages()
+      const stageItems = []
+      const compatColumns = []
+
+      for (const stageDef of defaultStages) {
+        const existing = (allStages || []).find(s => String(s.name || '').trim().toLowerCase() === stageDef.name.toLowerCase())
+        const stageId = existing?.id ? Number(existing.id) : Number(await db.addKanbanStage(stageDef))
+        stageItems.push({ stageId, sequence: stageDef.sequence })
+        compatColumns.push({ id: String(stageId), label: stageDef.name, color: stageDef.color })
+      }
+
+      await db.setProjectStages(projectId, stageItems)
+      await db.updateProject(projectId, {
+        useDefaultKanbanTemplate: true,
+        kanbanColumns: compatColumns
+      })
     },
     async addToTodoList(ticket) {
       if (!ticket?.title) return
@@ -1992,13 +2190,30 @@ export default {
     updateKanbanColumns(columns) {
       this.pendingKanbanColumns = columns
     },
+    onKanbanSaved(stages) {
+      // Synchroniser aussi le JSONB pour la compat descendante
+      const cols = stages.map((s, i) => ({
+        id: s.id ? s.id.toString() : `stage-${i}`,
+        label: s.name || '',
+        color: s.color || '#cfe2ff'
+      }))
+      this.pendingKanbanColumns = cols
+    },
     async saveKanbanColumns() {
-      if (this.pendingKanbanColumns) {
-        // Sérialiser les colonnes pour s'assurer qu'elles sont clonables par IndexedDB
+      // Appeler la méthode save() du composant relationnelle
+      if (this.$refs.kanbanEditor) {
+        await this.$refs.kanbanEditor.save()
+        // Synchroniser aussi le JSONB pour la compat descendante
+        if (this.pendingKanbanColumns) {
+          const serializableColumns = JSON.parse(JSON.stringify(this.pendingKanbanColumns))
+          await db.updateProject(this.project.id, { kanbanColumns: serializableColumns })
+        }
+        await this.loadProject()
+        this.showKanbanEditor = false
+        this.pendingKanbanColumns = null
+      } else if (this.pendingKanbanColumns) {
         const serializableColumns = JSON.parse(JSON.stringify(this.pendingKanbanColumns))
-        await db.updateProject(this.project.id, {
-          kanbanColumns: serializableColumns
-        })
+        await db.updateProject(this.project.id, { kanbanColumns: serializableColumns })
         await this.loadProject()
         this.showKanbanEditor = false
         this.pendingKanbanColumns = null
@@ -2678,11 +2893,9 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
       return classes[status] || 'badge-info'
     },
     getTicketStatusLabel(status) {
-      // Chercher dans les colonnes kanban du projet
-      if (this.project?.kanbanColumns) {
-        const col = this.project.kanbanColumns.find(c => c.id === status)
-        if (col) return col.label
-      }
+      // Chercher dans les colonnes effectives du projet
+      const col = this.effectiveColumns.find(c => String(c.id) === String(status))
+      if (col) return col.label
       const labels = {
         'todo': 'À faire',
         'in-progress': 'En cours',
@@ -2768,16 +2981,14 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
     },
     getTicketsByKanbanStatus(status) {
       if (status === '__other__') {
-        const baseColumns = this.project?.kanbanColumns?.length
-          ? this.project.kanbanColumns
-          : this.defaultColumns
+        const baseColumns = this.effectiveColumns
 
         return this.filteredTickets.filter(ticket => {
-          return !baseColumns.some(col => col.id === ticket.status)
+          return !baseColumns.some(col => String(col.id) === String(ticket.status))
         })
       }
 
-      return this.filteredTickets.filter(ticket => ticket.status === status)
+      return this.filteredTickets.filter(ticket => String(ticket.status) === String(status))
     },
     onTicketDragStart(ticketId) {
       this.draggedTicketId = ticketId
@@ -2800,6 +3011,45 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
       await db.updateTicket(this.draggedTicketId, { status: newStatus })
       await this.loadTickets()
       this.draggedTicketId = null
+    },
+    getLocalTasksByKanbanStatus(status) {
+      const baseColumns = this.effectiveColumns
+
+      if (status === '__other__') {
+        return this.filteredLocalTasks.filter(task => {
+          return !baseColumns.some(col => String(col.id) === String(task.status))
+        })
+      }
+
+      return this.filteredLocalTasks.filter(task => String(task.status) === String(status))
+    },
+    onLocalTaskDragStart(taskId) {
+      this.draggedLocalTaskId = taskId
+    },
+    onLocalTaskDragEnd() {
+      this.draggedLocalTaskId = null
+    },
+    async onLocalTaskDrop(newStatus) {
+      if (!this.draggedLocalTaskId || newStatus === '__other__') {
+        this.draggedLocalTaskId = null
+        return
+      }
+
+      const task = this.localTasks.find(t => t.id === this.draggedLocalTaskId)
+      if (!task || task.status === newStatus) {
+        this.draggedLocalTaskId = null
+        return
+      }
+
+      const updates = { status: newStatus }
+      const parsedStageId = Number.parseInt(newStatus, 10)
+      if (Number.isFinite(parsedStageId)) {
+        updates.stageId = parsedStageId
+      }
+
+      await db.updateLocalTask(this.draggedLocalTaskId, updates)
+      await this.loadLocalTasks()
+      this.draggedLocalTaskId = null
     },
     // ===== SELECTION MULTIPLE TICKETS =====
     toggleTicketSelectMode() {
@@ -2897,8 +3147,19 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
       }))
     },
     async saveLocalTask() {
+      const activeSprintId = this.currentSprintForSelectedProject?.id || null
+      const sprintId = this.localTaskFormOptions.addToCurrentSprint
+        ? activeSprintId
+        : (this.localTaskForm.sprintId || null)
+
+      if (this.localTaskFormOptions.addToCurrentSprint && !activeSprintId) {
+        alert('Aucun sprint actif sur ce projet.')
+        return
+      }
+
       const payload = {
         ...this.localTaskForm,
+        sprintId,
         startDate: this.localTaskForm.startDate ? this.toDateOnlyString(this.localTaskForm.startDate) : null
       }
 
@@ -2918,9 +3179,15 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
     },
     openLocalTaskForm() {
       const activeSprint = this.currentSprintForSelectedProject
+      const columns = this.effectiveColumns
+      const defaultStatus = columns[0]?.id || 'todo'
       this.showLocalTaskForm = true
+      this.localTaskFormOptions = {
+        addToCurrentSprint: !!activeSprint
+      }
       this.localTaskForm = {
         ...this.localTaskForm,
+        status: defaultStatus,
         sprintId: this.localTaskForm.sprintId ?? (activeSprint?.id || null),
         startDate: this.localTaskForm.startDate || new Date().toISOString().split('T')[0],
         assignedUserId: this.localTaskForm.assignedUserId ?? this.currentUserId
@@ -2928,11 +3195,16 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
     },
     cancelLocalTaskForm() {
       const activeSprint = this.currentSprintForSelectedProject
+      const columns = this.effectiveColumns
+      const defaultStatus = columns[0]?.id || 'todo'
       this.showLocalTaskForm = false
+      this.localTaskFormOptions = {
+        addToCurrentSprint: false
+      }
       this.localTaskForm = {
         title: '',
         description: '',
-        status: 'todo',
+        status: defaultStatus,
         priority: 'medium',
         sprintId: activeSprint?.id || null,
         startDate: new Date().toISOString().split('T')[0],
@@ -2945,12 +3217,26 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
       }
     },
     async editLocalTask(task) {
+      this.localTaskFormOptions = {
+        addToCurrentSprint: false
+      }
+      const columns = this.effectiveColumns
+      // Si le statut actuel de la tâche ne correspond à aucune colonne du projet,
+      // on le normalise vers la première colonne disponible
+      const statusExists = columns.some(col => String(col.id) === String(task.status))
+      const normalizedStatus = statusExists ? task.status : (columns[0]?.id || 'todo')
       this.localTaskForm = {
         ...task,
+        status: normalizedStatus,
         startDate: task.startDate || new Date().toISOString().split('T')[0],
         assignedUserId: task.assignedUserId ?? null
       }
       this.showLocalTaskForm = true
+    },
+    handleLocalTaskCurrentSprintToggle() {
+      if (this.localTaskFormOptions.addToCurrentSprint) {
+        this.localTaskForm.sprintId = this.currentSprintForSelectedProject?.id || null
+      }
     },
     async deleteLocalTaskConfirm(task) {
       if (confirm(`Supprimer la tâche "${task.title}" ?`)) {

@@ -1,15 +1,16 @@
 <template>
   <div class="kanban-editor">
-    <h3>📊 Configurer les colonnes Kanban</h3>
+    <h3>📊 Étapes Kanban du projet</h3>
     <p style="color: #666; font-size: 0.9rem; margin-bottom: 1rem;">
-      Définissez les étapes de votre workflow. Les tickets utiliseront ces colonnes dans la vue Kanban.
+      Définissez les étapes de votre workflow (comme <em>project.task.type</em> dans Odoo).
+      Une étape peut être partagée entre plusieurs projets.
     </p>
 
-    <!-- Liste des colonnes -->
+    <!-- Étapes du projet (relationnelles) -->
     <div class="columns-list">
       <div
-        v-for="(column, index) in localColumns"
-        :key="index"
+        v-for="(stage, index) in projectStages"
+        :key="stage.id || index"
         class="column-item"
         draggable="true"
         @dragstart="onDragStart($event, index)"
@@ -22,63 +23,80 @@
         <div class="column-handle" style="cursor: grab;">☰</div>
         <div class="column-inputs">
           <input
-            v-model="column.label"
-            placeholder="Nom de la colonne"
+            v-model="stage.name"
+            placeholder="Nom de l'étape"
             class="column-label-input"
-            @input="emitUpdate"
+            @input="markDirty"
           />
           <input
-            v-model="column.color"
+            v-model="stage.color"
             type="color"
             class="column-color-input"
-            title="Couleur de la colonne"
-            @input="emitUpdate"
+            title="Couleur de l'étape"
+            @input="markDirty"
           />
+          <label class="fold-label" title="Étape repliée dans le kanban">
+            <input v-model="stage.folded" type="checkbox" @change="markDirty" /> Replié
+          </label>
         </div>
         <button
-          @click="removeColumn(index)"
+          @click="removeStageFromProject(index)"
           class="btn-remove"
-          :disabled="localColumns.length <= 1"
-          title="Supprimer cette colonne"
-        >
-          🗑️
-        </button>
+          :disabled="projectStages.length <= 1"
+          title="Retirer cette étape du projet"
+        >🗑️</button>
       </div>
     </div>
 
-    <!-- Bouton ajouter -->
-    <button @click="addColumn" class="btn btn-secondary" style="margin-top: 1rem;">
-      + Ajouter une colonne
-    </button>
+    <!-- Ajouter une nouvelle étape -->
+    <div class="add-stage-row">
+      <button @click="addNewStage" class="btn btn-secondary">+ Nouvelle étape</button>
+      <div v-if="availableStages.length > 0" class="add-existing">
+        <span style="color: #666; font-size: 0.9rem;">ou réutiliser :</span>
+        <select v-model="stageToAdd" @change="addExistingStage" style="max-width: 220px;">
+          <option value="">— étape existante —</option>
+          <option v-for="s in availableStages" :key="s.id" :value="s.id">{{ s.name }}</option>
+        </select>
+      </div>
+    </div>
 
     <!-- Aperçu -->
     <div class="preview-section">
       <h4>Aperçu</h4>
       <div class="preview-columns">
         <div
-          v-for="(column, index) in localColumns"
+          v-for="(stage, index) in projectStages"
           :key="index"
           class="preview-column"
-          :style="{ backgroundColor: column.color }"
+          :style="{ backgroundColor: stage.color || '#cfe2ff' }"
         >
-          <strong>{{ column.label || 'Sans nom' }}</strong>
+          <strong>{{ stage.name || 'Sans nom' }}</strong>
+          <small v-if="stage.folded" style="display:block;color:#888;">replié</small>
         </div>
       </div>
     </div>
 
-    <!-- Info -->
-    <div class="info-box">
-      <strong>💡 Conseil :</strong> Les tickets existants conserveront leur statut. 
-      Si vous supprimez une colonne, les tickets avec ce statut seront toujours visibles 
-      mais n'apparaîtront plus dans le Kanban.
+    <!-- Sauvegarde -->
+    <div v-if="isDirty" class="dirty-notice">
+      ⚠️ Modifications non enregistrées
     </div>
+
+    <div v-if="errorMsg" class="error-message">{{ errorMsg }}</div>
+    <div v-if="successMsg" class="success-message">{{ successMsg }}</div>
   </div>
 </template>
 
 <script>
+import { db } from '../services/database-new'
+
 export default {
   name: 'KanbanColumnsEditor',
   props: {
+    projectId: {
+      type: Number,
+      default: null
+    },
+    // Compat descendante : colonnes JSONB (ignorées si projectId est fourni)
     columns: {
       type: Array,
       default: () => [
@@ -88,40 +106,145 @@ export default {
       ]
     }
   },
-  emits: ['update'],
+  emits: ['update', 'saved'],
   data() {
     return {
-      localColumns: [],
-      draggedIndex: null
+      projectStages: [],   // étapes associées au projet (relationnelles)
+      allStages: [],       // toutes les étapes existantes en base
+      stageToAdd: '',
+      isDirty: false,
+      draggedIndex: null,
+      errorMsg: '',
+      successMsg: ''
+    }
+  },
+  computed: {
+    availableStages() {
+      const projectStageIds = new Set(this.projectStages.map(s => s.id).filter(Boolean))
+      return this.allStages.filter(s => !projectStageIds.has(s.id))
     }
   },
   watch: {
-    columns: {
+    projectId: {
       immediate: true,
-      handler(newColumns) {
-        this.localColumns = JSON.parse(JSON.stringify(newColumns))
+      async handler(newId) {
+        if (newId) {
+          await this.loadStages()
+        } else {
+          // Compat descendante : convertir les colonnes JSONB en stages visuelles (sans persistance)
+          this.projectStages = (this.columns || []).map(c => ({
+            id: null,
+            name: c.label || c.name || '',
+            color: c.color || '#cfe2ff',
+            folded: false,
+            _jsonId: c.id  // conserver l'ancien id pour l'emit compat
+          }))
+        }
       }
     }
   },
   methods: {
-    addColumn() {
-      const newId = 'status-' + Date.now()
-      this.localColumns.push({
-        id: newId,
-        label: '',
-        color: '#e0e0e0'
-      })
-      this.emitUpdate()
-    },
-    removeColumn(index) {
-      if (this.localColumns.length > 1) {
-        this.localColumns.splice(index, 1)
-        this.emitUpdate()
+    async loadStages() {
+      try {
+        this.allStages = await db.getAllKanbanStages()
+        if (this.projectId) {
+          const stages = await db.getStagesByProject(this.projectId)
+          this.projectStages = stages.map(s => ({ ...s }))
+        }
+        this.isDirty = false
+        this.errorMsg = ''
+      } catch (e) {
+        this.errorMsg = 'Erreur chargement des étapes : ' + e.message
       }
     },
-    emitUpdate() {
-      this.$emit('update', this.localColumns)
+    markDirty() {
+      this.isDirty = true
+      this.emitUpdate()
     },
+    emitUpdate() {
+      // Compat descendante : émettre dans le format kanbanColumns JSONB
+      const cols = this.projectStages.map((s, i) => ({
+        id: s._jsonId || (s.id ? s.id.toString() : `stage-${i}`),
+        label: s.name || '',
+        color: s.color || '#cfe2ff'
+      }))
+      this.$emit('update', cols)
+    },
+    addNewStage() {
+      this.projectStages.push({
+        id: null,
+        name: '',
+        color: '#e0e0e0',
+        folded: false,
+        sequence: (this.projectStages.length + 1) * 10,
+        _isNew: true
+      })
+      this.isDirty = true
+    },
+    async addExistingStage() {
+      if (!this.stageToAdd) return
+      const stage = this.allStages.find(s => s.id === Number(this.stageToAdd))
+      if (stage) {
+        this.projectStages.push({ ...stage })
+        this.isDirty = true
+        this.emitUpdate()
+      }
+      this.stageToAdd = ''
+    },
+    removeStageFromProject(index) {
+      if (this.projectStages.length <= 1) return
+      this.projectStages.splice(index, 1)
+      this.isDirty = true
+      this.emitUpdate()
+    },
+    // Sauvegarde relationnelle (appelée par le parent via ref ou depuis ce composant)
+    async save() {
+      if (!this.projectId) {
+        // Compat descendante : juste émettre
+        this.emitUpdate()
+        return
+      }
+      try {
+        this.errorMsg = ''
+        // 1. Créer ou mettre à jour les stages nouvelles/modifiées
+        for (const stage of this.projectStages) {
+          if (stage._isNew || !stage.id) {
+            // Créer une nouvelle stage globale
+            const created = await db.addKanbanStage({
+              name: stage.name || 'Nouvelle étape',
+              sequence: stage.sequence || 10,
+              color: stage.color || '#cfe2ff',
+              folded: stage.folded || false
+            })
+            stage.id = Number(created)
+            delete stage._isNew
+          } else {
+            // Mettre à jour la stage existante
+            await db.updateKanbanStage(stage.id, {
+              name: stage.name,
+              color: stage.color,
+              folded: stage.folded
+            })
+          }
+        }
+        // 2. Mettre à jour la relation projet <-> étapes
+        const stageItems = this.projectStages.map((s, i) => ({
+          stageId: s.id,
+          sequence: (i + 1) * 10
+        }))
+        await db.setProjectStages(this.projectId, stageItems)
+        // 3. Recharger depuis la BDD
+        await this.loadStages()
+        this.isDirty = false
+        this.successMsg = '✅ Étapes enregistrées'
+        setTimeout(() => { this.successMsg = '' }, 3000)
+        this.$emit('saved', this.projectStages)
+        this.emitUpdate()
+      } catch (e) {
+        this.errorMsg = 'Erreur lors de la sauvegarde : ' + e.message
+      }
+    },
+    // === Drag & drop ===
     onDragStart(event, index) {
       this.draggedIndex = index
       event.dataTransfer.effectAllowed = 'move'
@@ -138,22 +261,19 @@ export default {
     onDrop(event, dropIndex) {
       event.preventDefault()
       event.currentTarget.classList.remove('drag-over')
-      
       if (this.draggedIndex !== null && this.draggedIndex !== dropIndex) {
-        // Réorganiser les colonnes
-        const draggedColumn = this.localColumns[this.draggedIndex]
-        const newColumns = [...this.localColumns]
-        newColumns.splice(this.draggedIndex, 1)
-        newColumns.splice(dropIndex, 0, draggedColumn)
-        this.localColumns = newColumns
+        const dragged = this.projectStages[this.draggedIndex]
+        const newList = [...this.projectStages]
+        newList.splice(this.draggedIndex, 1)
+        newList.splice(dropIndex, 0, dragged)
+        this.projectStages = newList
+        this.isDirty = true
         this.emitUpdate()
       }
     },
     onDragEnd(event) {
       event.target.classList.remove('dragging')
-      document.querySelectorAll('.column-item').forEach(el => {
-        el.classList.remove('drag-over')
-      })
+      document.querySelectorAll('.column-item').forEach(el => el.classList.remove('drag-over'))
       this.draggedIndex = null
     }
   }
@@ -186,11 +306,7 @@ export default {
   transition: all 0.2s;
 }
 
-.column-item.dragging {
-  opacity: 0.5;
-  transform: scale(0.95);
-}
-
+.column-item.dragging { opacity: 0.5; transform: scale(0.95); }
 .column-item.drag-over {
   border: 2px solid #007bff;
   background-color: #e7f3ff;
@@ -198,91 +314,116 @@ export default {
   box-shadow: 0 4px 8px rgba(0,123,255,0.2);
 }
 
-.column-handle {
-  cursor: grab;
-  color: #999;
-  font-size: 1.2rem;
-  user-select: none;
-}
-
 .column-inputs {
   flex: 1;
   display: flex;
   gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .column-label-input {
   flex: 1;
-  padding: 0.5rem;
+  min-width: 120px;
+  padding: 0.4rem 0.6rem;
   border: 1px solid #ddd;
   border-radius: 4px;
   font-size: 0.9rem;
 }
 
-.column-label-input:focus {
-  outline: none;
-  border-color: #4DBA87;
-}
-
 .column-color-input {
-  width: 60px;
-  height: 38px;
+  width: 40px;
+  height: 34px;
+  padding: 2px;
   border: 1px solid #ddd;
   border-radius: 4px;
+  cursor: pointer;
+}
+
+.fold-label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: #666;
+  white-space: nowrap;
   cursor: pointer;
 }
 
 .btn-remove {
   background: none;
-  border: none;
-  font-size: 1.2rem;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
   cursor: pointer;
-  padding: 0.25rem;
-  opacity: 0.6;
-  transition: opacity 0.2s;
+  padding: 0.3rem 0.5rem;
+  color: #dc3545;
+  transition: all 0.2s;
+}
+.btn-remove:hover:not(:disabled) { background: #dc3545; color: white; }
+.btn-remove:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.add-stage-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1rem;
+  flex-wrap: wrap;
 }
 
-.btn-remove:hover:not(:disabled) {
-  opacity: 1;
+.add-existing {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
-.btn-remove:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
+.add-existing select {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 0.9rem;
 }
 
 .preview-section {
   margin-top: 1.5rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid #ddd;
-}
-
-.preview-section h4 {
-  margin-bottom: 0.75rem;
-  color: #666;
+  padding-top: 1rem;
+  border-top: 1px solid #dee2e6;
 }
 
 .preview-columns {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  display: flex;
   gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
 }
 
 .preview-column {
-  padding: 1rem;
-  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  min-width: 80px;
   text-align: center;
-  font-size: 0.9rem;
-  border: 1px solid rgba(0,0,0,0.1);
+  font-size: 0.85rem;
 }
 
-.info-box {
+.dirty-notice {
   margin-top: 1rem;
-  padding: 0.75rem;
-  background: #e7f3ff;
-  border-left: 4px solid #0066cc;
+  padding: 0.5rem 1rem;
+  background: #fff3cd;
+  border: 1px solid #ffc107;
   border-radius: 4px;
   font-size: 0.875rem;
-  color: #333;
+  color: #856404;
+}
+
+.error-message {
+  color: #dc3545;
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
+}
+
+.success-message {
+  color: #198754;
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
 }
 </style>
+

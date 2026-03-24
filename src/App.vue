@@ -100,6 +100,7 @@ export default {
           children: [
             { id: 'all-projects', label: '📁 Voir tous les projets', to: '/projects', highlight: true },
             { id: 'tickets', label: '🎫 Tickets', to: '/tickets' },
+            { id: 'kanban-stages', label: '📊 Étapes Kanban', to: '/kanban-stages' },
             { id: 'time-entries', label: '⏱️ Feuilles de temps', to: '/time-entries' },
             { id: 'tasks', label: '✅ Tâches', to: '/tasks' }
           ]

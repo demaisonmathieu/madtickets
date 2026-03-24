@@ -60,6 +60,15 @@
           </select>
         </div>
         <div class="form-group">
+          <label style="display:flex; align-items:center; gap:0.5rem;">
+            <input type="checkbox" v-model="form.useDefaultKanbanTemplate" style="width:auto;" />
+            Utiliser le modèle d'étapes Kanban par défaut
+          </label>
+          <small style="color:#666; display:block; margin-top:0.35rem;">
+            Étapes par défaut : À faire, En cours, Terminé.
+          </small>
+        </div>
+        <div class="form-group">
           <label>Followers du projet</label>
           <div class="followers-picker">
             <label v-for="user in users" :key="`follower-${user.id}`" class="follower-option">
@@ -146,6 +155,7 @@ export default {
         description: '',
         status: 'active',
         assignedUserId: null,
+        useDefaultKanbanTemplate: true,
         followerUserIds: []
       }
     }
@@ -196,12 +206,22 @@ export default {
           ...this.form,
           followerUserIds
         })
+
+        const enabledNow = this.form.useDefaultKanbanTemplate === true
+        const enabledBefore = this.editingProject.useDefaultKanbanTemplate === true
+        if (enabledNow && !enabledBefore) {
+          await this.applyDefaultKanbanModelToProject(this.editingProject.id, true)
+        }
       } else {
-        await db.addProject({
+        const createdId = await db.addProject({
           ...this.form,
           assignedUserId: this.form.assignedUserId ?? this.currentUserId,
           followerUserIds
         })
+        const projectId = Number(createdId)
+        if (this.form.useDefaultKanbanTemplate && Number.isFinite(projectId) && projectId > 0) {
+          await this.applyDefaultKanbanModelToProject(projectId, true)
+        }
       }
       await this.loadProjects()
       this.cancelForm()
@@ -213,6 +233,7 @@ export default {
         description: project.description || '',
         status: project.status,
         assignedUserId: project.assignedUserId ?? null,
+        useDefaultKanbanTemplate: project.useDefaultKanbanTemplate !== false,
         followerUserIds: this.normalizeFollowerUserIds(project.followerUserIds, project.assignedUserId)
       }
       this.showForm = true
@@ -225,8 +246,38 @@ export default {
         description: '',
         status: 'active',
         assignedUserId: this.currentUserId,
+        useDefaultKanbanTemplate: true,
         followerUserIds: this.currentUserId ? [this.currentUserId] : []
       }
+    },
+    async applyDefaultKanbanModelToProject(projectId, force = false) {
+      const defaultStages = [
+        { name: 'À faire', sequence: 10, color: '#fff3cd', folded: false },
+        { name: 'En cours', sequence: 20, color: '#cfe2ff', folded: false },
+        { name: 'Terminé', sequence: 30, color: '#d1e7dd', folded: false }
+      ]
+
+      if (!force) {
+        const existing = await db.getStagesByProject(projectId)
+        if ((existing || []).length > 0) return
+      }
+
+      const allStages = await db.getAllKanbanStages()
+      const stageItems = []
+      const compatColumns = []
+
+      for (const stageDef of defaultStages) {
+        const existing = (allStages || []).find(s => String(s.name || '').trim().toLowerCase() === stageDef.name.toLowerCase())
+        const stageId = existing?.id ? Number(existing.id) : Number(await db.addKanbanStage(stageDef))
+        stageItems.push({ stageId, sequence: stageDef.sequence })
+        compatColumns.push({ id: String(stageId), label: stageDef.name, color: stageDef.color })
+      }
+
+      await db.setProjectStages(projectId, stageItems)
+      await db.updateProject(projectId, {
+        useDefaultKanbanTemplate: true,
+        kanbanColumns: compatColumns
+      })
     },
     normalizeFollowerUserIds(followerUserIds, assignedUserId = null) {
       const ids = new Set()
