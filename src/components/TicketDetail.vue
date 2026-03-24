@@ -1346,6 +1346,12 @@ export default {
       await db.updateTicket(this.ticket.id, { userStories: stories })
       await this.loadTicket()
     },
+    extractText(html) {
+      if (!html) return ''
+      const temp = document.createElement('div')
+      temp.innerHTML = html
+      return temp.textContent || temp.innerText || ''
+    },
     getStoryCriteria(story) {
       if (Array.isArray(story?.acceptanceCriteriaItems) && story.acceptanceCriteriaItems.length > 0) {
         return story.acceptanceCriteriaItems
