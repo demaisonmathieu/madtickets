@@ -2,7 +2,7 @@ import { openDB, IDBPDatabase } from 'idb';
 import { apiFetch } from './api';
 
 const DB_NAME = 'tickets-db';
-const DB_VERSION = 16;
+const DB_VERSION = 17;
 const SESSION_KEY = 'tickets.auth.session';
 
 // Types
@@ -21,6 +21,13 @@ export interface KanbanStage {
   folded?: boolean;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface TestAccount {
+  id: string;
+  login: string;
+  password: string;
+  description?: string;
 }
 
 export interface Project {
@@ -44,6 +51,7 @@ export interface Project {
   hoursPerDay?: number;
   // Partage des recettes
   recetteShareToken?: string | null;
+  testAccounts?: TestAccount[];
   createdAt?: string;
   updatedAt?: string;
 }
@@ -233,6 +241,17 @@ export interface User {
   passwordSalt: string;
   active?: boolean;
   createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface MenuPreferences {
+  userId: number;
+  customMainMenuItems: unknown[];
+  menuOrder: string[];
+  hiddenMenuItemIds: string[];
+  submenuOrder: Record<string, string[]>;
+  hiddenSubmenuItemIds: string[];
+  menuParentMap: Record<string, string | null>;
   updatedAt?: string;
 }
 
@@ -506,6 +525,11 @@ class DatabaseService {
         if (!db.objectStoreNames.contains('projectStageRel')) {
           const relStore = db.createObjectStore('projectStageRel', { keyPath: ['projectId', 'stageId'] });
           relStore.createIndex('projectId', 'projectId');
+        }
+
+        // Store pour les préférences de menu utilisateur (nouveau en v17)
+        if (!db.objectStoreNames.contains('menuPreferences')) {
+          db.createObjectStore('menuPreferences', { keyPath: 'userId' });
         }
       }
     });
@@ -1395,6 +1419,27 @@ class DatabaseService {
     await this.db!.delete('users', id);
   }
 
+  async getUserMenuPreferences(userId: number): Promise<MenuPreferences | null> {
+    if (!Number.isFinite(Number(userId)) || Number(userId) <= 0) return null;
+    return (await this.db!.get('menuPreferences', Number(userId))) || null;
+  }
+
+  async saveUserMenuPreferences(userId: number, preferences: Omit<MenuPreferences, 'userId' | 'updatedAt'>): Promise<void> {
+    const normalizedUserId = Number(userId);
+    if (!Number.isFinite(normalizedUserId) || normalizedUserId <= 0) return;
+
+    await this.db!.put('menuPreferences', {
+      userId: normalizedUserId,
+      customMainMenuItems: Array.isArray(preferences.customMainMenuItems) ? preferences.customMainMenuItems : [],
+      menuOrder: Array.isArray(preferences.menuOrder) ? preferences.menuOrder : [],
+      hiddenMenuItemIds: Array.isArray(preferences.hiddenMenuItemIds) ? preferences.hiddenMenuItemIds : [],
+      submenuOrder: preferences.submenuOrder && typeof preferences.submenuOrder === 'object' ? preferences.submenuOrder : {},
+      hiddenSubmenuItemIds: Array.isArray(preferences.hiddenSubmenuItemIds) ? preferences.hiddenSubmenuItemIds : [],
+      menuParentMap: preferences.menuParentMap && typeof preferences.menuParentMap === 'object' ? preferences.menuParentMap : {},
+      updatedAt: new Date().toISOString()
+    });
+  }
+
   async syncLocalToRemote(clearRemote: boolean = true): Promise<SyncReport> {
     const snapshot = await this.exportDatabase();
     await this.remoteRpc('importDatabase', [snapshot, clearRemote]);
@@ -2050,6 +2095,25 @@ class RemoteDatabaseService extends DatabaseService {
 
   async deleteUser(id: number): Promise<void> {
     await this.rpc('deleteUser', [id]);
+  }
+
+  async getUserMenuPreferences(userId: number): Promise<MenuPreferences | null> {
+    if (!Number.isFinite(Number(userId)) || Number(userId) <= 0) return null;
+    return this.rpc<MenuPreferences | null>('getUserMenuPreferences', [Number(userId)]);
+  }
+
+  async saveUserMenuPreferences(userId: number, preferences: Omit<MenuPreferences, 'userId' | 'updatedAt'>): Promise<void> {
+    const normalizedUserId = Number(userId);
+    if (!Number.isFinite(normalizedUserId) || normalizedUserId <= 0) return;
+
+    await this.rpc('saveUserMenuPreferences', [normalizedUserId, {
+      customMainMenuItems: Array.isArray(preferences.customMainMenuItems) ? preferences.customMainMenuItems : [],
+      menuOrder: Array.isArray(preferences.menuOrder) ? preferences.menuOrder : [],
+      hiddenMenuItemIds: Array.isArray(preferences.hiddenMenuItemIds) ? preferences.hiddenMenuItemIds : [],
+      submenuOrder: preferences.submenuOrder && typeof preferences.submenuOrder === 'object' ? preferences.submenuOrder : {},
+      hiddenSubmenuItemIds: Array.isArray(preferences.hiddenSubmenuItemIds) ? preferences.hiddenSubmenuItemIds : [],
+      menuParentMap: preferences.menuParentMap && typeof preferences.menuParentMap === 'object' ? preferences.menuParentMap : {}
+    }]);
   }
 
   async syncLocalToRemote(_clearRemote: boolean = true): Promise<SyncReport> {

@@ -13,6 +13,12 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS user_menu_preferences (
+  user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  preferences JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS projects (
   id BIGSERIAL PRIMARY KEY,
   name TEXT NOT NULL,
@@ -196,6 +202,7 @@ CREATE TABLE IF NOT EXISTS project_stage_rel (
 -- Lien relationnel vers l'étape kanban sur les tickets et tâches locales
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS stage_id BIGINT REFERENCES kanban_stages(id) ON DELETE SET NULL;
 ALTER TABLE local_tasks ADD COLUMN IF NOT EXISTS stage_id BIGINT REFERENCES kanban_stages(id) ON DELETE SET NULL;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS test_accounts JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE INDEX IF NOT EXISTS idx_kanban_stages_sequence ON kanban_stages(sequence);
 CREATE INDEX IF NOT EXISTS idx_project_stage_rel_project ON project_stage_rel(project_id);

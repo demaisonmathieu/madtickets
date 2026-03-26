@@ -32,6 +32,7 @@ const projectFields = {
   tjm: 'tjm',
   hoursPerDay: 'hours_per_day',
   recetteShareToken: 'recette_share_token',
+  testAccounts: 'test_accounts',
   createdAt: 'created_at',
   updatedAt: 'updated_at',
 }
@@ -174,7 +175,7 @@ const userFields = {
   updatedAt: 'updated_at',
 }
 
-const jsonProjectFields = ['kanbanColumns']
+const jsonProjectFields = ['kanbanColumns', 'testAccounts']
 const jsonTicketFields = ['recetteHistory', 'notes', 'userStories', 'attachments', 'ganttAssignments']
 const jsonSprintFields = ['meetingNotes']
 const jsonLocalTaskFields = ['attachments', 'ganttAssignments']
@@ -292,6 +293,7 @@ function mapProject(row) {
     tjm: row.tjm !== null ? Number(row.tjm) : null,
     hoursPerDay: row.hours_per_day !== null ? Number(row.hours_per_day) : null,
     recetteShareToken: row.recette_share_token || null,
+    testAccounts: row.test_accounts || [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -457,6 +459,27 @@ function mapUser(row) {
     passwordSalt: row.password_salt,
     active: row.active,
     createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function normalizeMenuPreferences(input = {}) {
+  const safeInput = input && typeof input === 'object' ? input : {}
+  return {
+    customMainMenuItems: Array.isArray(safeInput.customMainMenuItems) ? safeInput.customMainMenuItems : [],
+    menuOrder: Array.isArray(safeInput.menuOrder) ? safeInput.menuOrder : [],
+    hiddenMenuItemIds: Array.isArray(safeInput.hiddenMenuItemIds) ? safeInput.hiddenMenuItemIds : [],
+    submenuOrder: safeInput.submenuOrder && typeof safeInput.submenuOrder === 'object' ? safeInput.submenuOrder : {},
+    hiddenSubmenuItemIds: Array.isArray(safeInput.hiddenSubmenuItemIds) ? safeInput.hiddenSubmenuItemIds : [],
+    menuParentMap: safeInput.menuParentMap && typeof safeInput.menuParentMap === 'object' ? safeInput.menuParentMap : {},
+  }
+}
+
+function mapUserMenuPreferences(row) {
+  const preferences = normalizeMenuPreferences(row?.preferences || {})
+  return {
+    userId: Number(row.user_id),
+    ...preferences,
     updatedAt: row.updated_at,
   }
 }
@@ -630,6 +653,7 @@ async function getPublicRecetteByToken(token) {
       description: project.description,
       preprodUrl: project.preprodUrl || '',
       prodUrl: project.prodUrl || '',
+      testAccounts: project.testAccounts || [],
     },
     tickets: result.rows.map(mapTicket),
   }
@@ -1226,9 +1250,45 @@ async function deleteUser(id) {
   return true
 }
 
+async function getUserMenuPreferences(userId) {
+  const normalizedUserId = Number(userId)
+  if (!Number.isFinite(normalizedUserId) || normalizedUserId <= 0) {
+    throw makeError('Utilisateur invalide', 400)
+  }
+
+  const result = await query('SELECT * FROM user_menu_preferences WHERE user_id = $1 LIMIT 1', [normalizedUserId])
+  if (!result.rows.length) return null
+  return mapUserMenuPreferences(result.rows[0])
+}
+
+async function getAllUserMenuPreferences() {
+  const result = await query('SELECT * FROM user_menu_preferences ORDER BY user_id ASC')
+  return result.rows.map(mapUserMenuPreferences)
+}
+
+async function saveUserMenuPreferences(userId, preferences) {
+  const normalizedUserId = Number(userId)
+  if (!Number.isFinite(normalizedUserId) || normalizedUserId <= 0) {
+    throw makeError('Utilisateur invalide', 400)
+  }
+
+  const normalizedPreferences = normalizeMenuPreferences(preferences)
+
+  const result = await query(
+    `INSERT INTO user_menu_preferences (user_id, preferences, updated_at)
+     VALUES ($1, $2::jsonb, NOW())
+     ON CONFLICT (user_id)
+     DO UPDATE SET preferences = EXCLUDED.preferences, updated_at = NOW()
+     RETURNING *`,
+    [normalizedUserId, JSON.stringify(normalizedPreferences)]
+  )
+
+  return mapUserMenuPreferences(result.rows[0])
+}
+
 async function clearAllData() {
   await withTransaction(async (client) => {
-    await client.query('TRUNCATE TABLE time_entries, tickets, sprints, todos, local_tasks, odoo_tasks, passwords, projects, users RESTART IDENTITY CASCADE')
+    await client.query('TRUNCATE TABLE user_menu_preferences, time_entries, tickets, sprints, todos, local_tasks, odoo_tasks, passwords, projects, users RESTART IDENTITY CASCADE')
   })
   return true
 }
@@ -1246,6 +1306,7 @@ async function exportDatabaseSnapshot() {
     localTasks: await getAllLocalTasks(),
     passwords: await getAllPasswords(),
     users: await getAllUsers(),
+    menuPreferences: await getAllUserMenuPreferences(),
   }
 }
 
@@ -1261,11 +1322,25 @@ async function importDatabaseSnapshot(jsonData, clearExisting = true) {
   }
 
   await withTransaction(async (client) => {
-    await client.query('TRUNCATE TABLE time_entries, tickets, sprints, todos, local_tasks, odoo_tasks, passwords, projects, users RESTART IDENTITY CASCADE')
+    await client.query('TRUNCATE TABLE user_menu_preferences, time_entries, tickets, sprints, todos, local_tasks, odoo_tasks, passwords, projects, users RESTART IDENTITY CASCADE')
 
     if (Array.isArray(data.users)) {
       for (const user of data.users) {
         await insertRow(client, 'users', userFields, user, mapUser)
+      }
+    }
+
+    if (Array.isArray(data.menuPreferences)) {
+      for (const menuPreference of data.menuPreferences) {
+        const normalizedUserId = Number(menuPreference.userId)
+        if (!Number.isFinite(normalizedUserId) || normalizedUserId <= 0) continue
+        await client.query(
+          `INSERT INTO user_menu_preferences (user_id, preferences, updated_at)
+           VALUES ($1, $2::jsonb, NOW())
+           ON CONFLICT (user_id)
+           DO UPDATE SET preferences = EXCLUDED.preferences, updated_at = NOW()`,
+          [normalizedUserId, JSON.stringify(normalizeMenuPreferences(menuPreference))]
+        )
       }
     }
 
@@ -1399,6 +1474,87 @@ app.post('/api/email/send', async (req, res, next) => {
   }
 })
 
+app.post('/api/admin/mail/test', async (req, res, next) => {
+  try {
+    const { to, config } = req.body || {}
+
+    if (!to) {
+      return res.status(400).json({ message: 'Adresse destinataire manquante' })
+    }
+
+    if (!config || !config.host || !config.from) {
+      return res.status(400).json({ message: 'Configuration SMTP incomplète (host et from requis)' })
+    }
+
+    const secure = config.security === 'ssl'
+    const port = Number(config.port || (config.security === 'ssl' ? 465 : 587))
+
+    let auth
+    if (config.authMode === 'oauth2') {
+      if (!config.user || !config.oauth2ClientId || !config.oauth2ClientSecret || !config.oauth2RefreshToken) {
+        return res.status(400).json({ message: 'OAuth2 incomplet : user, clientId, clientSecret et refreshToken sont requis' })
+      }
+      auth = {
+        type: 'OAuth2',
+        user: config.user,
+        clientId: config.oauth2ClientId,
+        clientSecret: config.oauth2ClientSecret,
+        refreshToken: config.oauth2RefreshToken,
+      }
+    } else {
+      auth = config.user && config.password ? { user: config.user, pass: config.password } : undefined
+    }
+
+    const transporter = nodemailer.createTransport({
+      host: config.host,
+      port,
+      secure,
+      auth,
+      tls: { rejectUnauthorized: config.rejectUnauthorized !== false },
+    })
+
+    await transporter.verify()
+
+    const info = await transporter.sendMail({
+      from: config.fromName ? `"${config.fromName}" <${config.from}>` : config.from,
+      to,
+      subject: '✅ Test de configuration mail — Gestion Tickets',
+      text: `Bonjour,\n\nCe mail confirme que votre serveur SMTP est correctement configuré dans Gestion Tickets.\n\nServeur : ${config.host}:${port}\nSécurité : ${config.security}\nAuthentification : ${config.authMode === 'oauth2' ? 'OAuth2' : 'Mot de passe'}\nExpéditeur : ${config.from}\n\nBonne journée !`,
+      html: `<p>Bonjour,</p><p>Ce mail confirme que votre serveur SMTP est correctement configuré dans <strong>Gestion Tickets</strong>.</p><ul><li>Serveur : <code>${config.host}:${port}</code></li><li>Sécurité : <code>${config.security}</code></li><li>Authentification : <code>${config.authMode === 'oauth2' ? 'OAuth2' : 'Mot de passe'}</code></li><li>Expéditeur : <code>${config.from}</code></li></ul><p>Bonne journée !</p>`,
+    })
+
+    res.json({ ok: true, messageId: info.messageId, accepted: info.accepted })
+  } catch (error) {
+    const errorMessage = String(error?.message || '')
+    const errorCode = String(error?.code || '')
+
+    if (errorMessage.includes('invalid_client')) {
+      return res.status(400).json({
+        error: 'OAuth2 invalide: client introuvable',
+        message: 'Le Client ID/Client Secret ne correspond pas à un client OAuth Google valide dans le projet sélectionné.',
+        hint: 'Vérifiez le projet Google Cloud actif et recopiez exactement Client ID + Client Secret du même client OAuth 2.0.'
+      })
+    }
+
+    if (errorMessage.includes('unauthorized_client')) {
+      return res.status(400).json({
+        error: 'OAuth2 refusé: unauthorized_client',
+        message: 'Le client OAuth n\'est pas autorisé pour ce flux.',
+        hint: 'Dans Google Cloud: OAuth consent screen en mode Testing avec votre compte en Test users, et sur OAuth Playground utilisez vos propres credentials puis regénérez un refresh token.'
+      })
+    }
+
+    if (errorCode === 'EAUTH') {
+      return res.status(400).json({
+        error: 'Échec authentification SMTP',
+        message: errorMessage || 'Authentification refusée par le serveur SMTP',
+      })
+    }
+
+    next(error)
+  }
+})
+
 app.post('/api/rpc', async (req, res, next) => {
   try {
     const { method, params = [] } = req.body || {}
@@ -1464,6 +1620,8 @@ app.post('/api/rpc', async (req, res, next) => {
       case 'addUser': res.json(await addUser(params[0])); return
       case 'updateUser': res.json(await updateUser(params[0], params[1])); return
       case 'deleteUser': res.json(await deleteUser(params[0])); return
+      case 'getUserMenuPreferences': res.json(await getUserMenuPreferences(params[0])); return
+      case 'saveUserMenuPreferences': res.json(await saveUserMenuPreferences(params[0], params[1] || {})); return
       case 'clearAllData': res.json(await clearAllData()); return
       case 'exportDatabase': res.json(await exportDatabaseSnapshot()); return
       case 'importDatabase': res.json(await importDatabaseSnapshot(params[0], params[1] !== false)); return
@@ -1485,6 +1643,14 @@ async function ensureProjectExtraColumns() {
   await query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS client_email TEXT`)
   await query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS prod_url TEXT`)
   await query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS preprod_url TEXT`)
+  await query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS test_accounts JSONB NOT NULL DEFAULT '[]'::jsonb`)
+  await query(`
+    CREATE TABLE IF NOT EXISTS user_menu_preferences (
+      user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      preferences JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
 }
 
 async function startServer() {

@@ -201,10 +201,6 @@ export default {
     this.loadMenuPreferences()
   },
   methods: {
-    getMenuStorageKey(kind) {
-      const userId = this.currentUser?.userId || 'anon'
-      return `tickets.menu.${kind}.${userId}`
-    },
     isDropdownItem(item) {
       if (!item) return false
       return item.type === 'projects-dropdown' || item.type === 'sprints-dropdown' || item.type === 'custom-dropdown' || this.getVisibleSubmenuItems(item).length > 0
@@ -272,24 +268,37 @@ export default {
     isSubmenuVisible(parentId, childId) {
       return !this.hiddenSubmenuItemIds.includes(this.getSubmenuStorageKey(parentId, childId))
     },
-    loadMenuPreferences() {
+    async loadMenuPreferences() {
       try {
-        const storedCustomMenus = localStorage.getItem(this.getMenuStorageKey('customMenus'))
-        this.customMainMenuItems = storedCustomMenus ? JSON.parse(storedCustomMenus) : []
+        const userId = Number(this.currentUser?.userId)
+
+        if (!Number.isFinite(userId) || userId <= 0) {
+          this.customMainMenuItems = []
+          this.menuItems = JSON.parse(JSON.stringify(BASE_MENU_ITEMS))
+          this.menuOrder = this.menuItems.map(item => item.id)
+          this.hiddenMenuItemIds = []
+          this.submenuOrder = this.buildDefaultSubmenuOrder()
+          this.hiddenSubmenuItemIds = []
+          this.menuParentMap = {}
+          return
+        }
+
+        const { db } = await import('../services/database-new')
+        const stored = await db.getUserMenuPreferences(userId)
+        this.customMainMenuItems = Array.isArray(stored?.customMainMenuItems) ? stored.customMainMenuItems : []
         this.menuItems = [...JSON.parse(JSON.stringify(BASE_MENU_ITEMS)), ...this.customMainMenuItems]
 
-        const storedOrder = localStorage.getItem(this.getMenuStorageKey('order'))
-        const storedHidden = localStorage.getItem(this.getMenuStorageKey('hidden'))
-        const storedSubOrder = localStorage.getItem(this.getMenuStorageKey('subOrder'))
-        const storedSubHidden = localStorage.getItem(this.getMenuStorageKey('subHidden'))
-        const storedParentMap = localStorage.getItem(this.getMenuStorageKey('parentMap'))
-
-        this.menuOrder = storedOrder ? JSON.parse(storedOrder) : this.menuItems.map(item => item.id)
-        this.hiddenMenuItemIds = storedHidden ? JSON.parse(storedHidden) : []
-        this.submenuOrder = storedSubOrder ? JSON.parse(storedSubOrder) : this.buildDefaultSubmenuOrder()
-        this.hiddenSubmenuItemIds = storedSubHidden ? JSON.parse(storedSubHidden) : []
-        this.menuParentMap = storedParentMap ? JSON.parse(storedParentMap) : {}
-      } catch {
+        this.menuOrder = Array.isArray(stored?.menuOrder) && stored.menuOrder.length
+          ? stored.menuOrder
+          : this.menuItems.map(item => item.id)
+        this.hiddenMenuItemIds = Array.isArray(stored?.hiddenMenuItemIds) ? stored.hiddenMenuItemIds : []
+        this.submenuOrder = stored?.submenuOrder && typeof stored.submenuOrder === 'object'
+          ? stored.submenuOrder
+          : this.buildDefaultSubmenuOrder()
+        this.hiddenSubmenuItemIds = Array.isArray(stored?.hiddenSubmenuItemIds) ? stored.hiddenSubmenuItemIds : []
+        this.menuParentMap = stored?.menuParentMap && typeof stored.menuParentMap === 'object' ? stored.menuParentMap : {}
+      } catch (error) {
+        console.error('Erreur lors du chargement des préférences menu:', error)
         this.menuItems = JSON.parse(JSON.stringify(BASE_MENU_ITEMS))
         this.menuOrder = this.menuItems.map(item => item.id)
         this.hiddenMenuItemIds = []
@@ -299,13 +308,23 @@ export default {
         this.customMainMenuItems = []
       }
     },
-    saveMenuPreferences() {
-      localStorage.setItem(this.getMenuStorageKey('customMenus'), JSON.stringify(this.customMainMenuItems))
-      localStorage.setItem(this.getMenuStorageKey('order'), JSON.stringify(this.menuOrder))
-      localStorage.setItem(this.getMenuStorageKey('hidden'), JSON.stringify(this.hiddenMenuItemIds))
-      localStorage.setItem(this.getMenuStorageKey('subOrder'), JSON.stringify(this.submenuOrder))
-      localStorage.setItem(this.getMenuStorageKey('subHidden'), JSON.stringify(this.hiddenSubmenuItemIds))
-      localStorage.setItem(this.getMenuStorageKey('parentMap'), JSON.stringify(this.menuParentMap))
+    async saveMenuPreferences() {
+      const userId = Number(this.currentUser?.userId)
+      if (!Number.isFinite(userId) || userId <= 0) return
+
+      try {
+        const { db } = await import('../services/database-new')
+        await db.saveUserMenuPreferences(userId, {
+          customMainMenuItems: this.customMainMenuItems,
+          menuOrder: this.menuOrder,
+          hiddenMenuItemIds: this.hiddenMenuItemIds,
+          submenuOrder: this.submenuOrder,
+          hiddenSubmenuItemIds: this.hiddenSubmenuItemIds,
+          menuParentMap: this.menuParentMap
+        })
+      } catch (error) {
+        console.error('Erreur sauvegarde préférences menu:', error)
+      }
     },
     moveMenuItem(itemId, direction) {
       const list = [...this.editableMenuItems]

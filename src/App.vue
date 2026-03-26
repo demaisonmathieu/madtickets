@@ -48,6 +48,7 @@
             </template>
 
             <router-link to="/menu-config">⚙️ Menu</router-link>
+            <router-link v-if="isAdmin" to="/admin" class="admin-nav-link">🔧 Administration</router-link>
           </div>
 
           <div class="nav-user" v-if="currentUser">
@@ -78,6 +79,7 @@ export default {
       sprints: [],
       loading: false,
       currentUser: auth.getSession(),
+      odooEnabled: localStorage.getItem('app-odoo-enabled') !== 'false',
       menuOrder: [],
       hiddenMenuItemIds: [],
       submenuOrder: {},
@@ -102,12 +104,11 @@ export default {
             { id: 'tickets', label: '🎫 Tickets', to: '/tickets' },
             { id: 'kanban-stages', label: '📊 Étapes Kanban', to: '/kanban-stages' },
             { id: 'time-entries', label: '⏱️ Feuilles de temps', to: '/time-entries' },
-            { id: 'tasks', label: '✅ Tâches', to: '/tasks' }
+            { id: 'tasks', label: '✅ Tâches Odoo', to: '/tasks', odooOnly: true }
           ]
         },
         { id: 'documents', type: 'link', label: '📁 Documents', to: '/documents' },
         { id: 'passwords', type: 'link', label: '🔐 Mots de passe', to: '/passwords' },
-        { id: 'users', type: 'link', label: '👥 Utilisateurs', to: '/users', adminOnly: true },
         {
           id: 'sprints',
           type: 'sprints-dropdown',
@@ -117,7 +118,7 @@ export default {
           ]
         },
         { id: 'todos', type: 'link', label: 'Todo du jour', to: '/todos' },
-        { id: 'odoo', type: 'link', label: 'Odoo', to: '/odoo', adminOnly: true },
+        { id: 'odoo', type: 'link', label: '🔄 Odoo', to: '/odoo', adminOnly: true, odooOnly: true },
         { id: 'data', type: 'link', label: '💾 Backup', to: '/data', adminOnly: true }
       ]
     }
@@ -165,21 +166,22 @@ export default {
     visibleMenuItems() {
       return this.sortedMenuItems
         .filter(item => !item.adminOnly || this.isAdmin)
+        .filter(item => !item.odooOnly || this.odooEnabled)
         .filter(item => !this.getMenuParent(item.id))
         .filter(item => !this.hiddenMenuItemIds.includes(item.id))
     }
   },
   async mounted() {
-    this.loadMenuPreferences()
+    await this.loadMenuPreferences()
+    this.odooEnabled = localStorage.getItem('app-odoo-enabled') !== 'false'
+    window.addEventListener('odoo-enabled-changed', (e) => {
+      this.odooEnabled = e.detail
+    })
     if (!this.isLoginPage && this.currentUser) {
       await this.loadSprints()
     }
   },
   methods: {
-    getMenuStorageKey(kind) {
-      const userId = this.currentUser?.userId || 'anon'
-      return `tickets.menu.${kind}.${userId}`
-    },
     isDropdownItem(item) {
       if (!item) return false
       if (item.type === 'projects-dropdown' || item.type === 'sprints-dropdown' || item.type === 'custom-dropdown') {
@@ -246,7 +248,7 @@ export default {
         }
       }
 
-      return ordered.filter(child => !child.adminOnly || this.isAdmin)
+      return ordered.filter(child => (!child.adminOnly || this.isAdmin) && (!child.odooOnly || this.odooEnabled))
     },
     getVisibleSubmenuItems(parentItem) {
       return this.getEditableSubmenuItems(parentItem)
@@ -255,23 +257,35 @@ export default {
     isSubmenuVisible(parentId, childId) {
       return !this.hiddenSubmenuItemIds.includes(this.getSubmenuStorageKey(parentId, childId))
     },
-    loadMenuPreferences() {
+    async loadMenuPreferences() {
       try {
-        const storedCustomMenus = localStorage.getItem(this.getMenuStorageKey('customMenus'))
-        this.customMainMenuItems = storedCustomMenus ? JSON.parse(storedCustomMenus) : []
+        const userId = Number(this.currentUser?.userId)
+
+        if (!Number.isFinite(userId) || userId <= 0) {
+          this.customMainMenuItems = []
+          this.menuItems = this.menuItems.filter(item => !String(item.id).startsWith('custom-menu-'))
+          this.menuOrder = this.menuItems.map(item => item.id)
+          this.hiddenMenuItemIds = []
+          this.submenuOrder = this.buildDefaultSubmenuOrder()
+          this.hiddenSubmenuItemIds = []
+          this.menuParentMap = {}
+          return
+        }
+
+        const stored = await db.getUserMenuPreferences(userId)
+        this.customMainMenuItems = Array.isArray(stored?.customMainMenuItems) ? stored.customMainMenuItems : []
 
         this.menuItems = [...this.menuItems.filter(item => !String(item.id).startsWith('custom-menu-')), ...this.customMainMenuItems]
 
-        const storedOrder = localStorage.getItem(this.getMenuStorageKey('order'))
-        const storedHidden = localStorage.getItem(this.getMenuStorageKey('hidden'))
-        const storedSubOrder = localStorage.getItem(this.getMenuStorageKey('subOrder'))
-        const storedSubHidden = localStorage.getItem(this.getMenuStorageKey('subHidden'))
-        const storedParentMap = localStorage.getItem(this.getMenuStorageKey('parentMap'))
-        this.menuOrder = storedOrder ? JSON.parse(storedOrder) : this.menuItems.map(item => item.id)
-        this.hiddenMenuItemIds = storedHidden ? JSON.parse(storedHidden) : []
-        this.submenuOrder = storedSubOrder ? JSON.parse(storedSubOrder) : this.buildDefaultSubmenuOrder()
-        this.hiddenSubmenuItemIds = storedSubHidden ? JSON.parse(storedSubHidden) : []
-        this.menuParentMap = storedParentMap ? JSON.parse(storedParentMap) : {}
+        this.menuOrder = Array.isArray(stored?.menuOrder) && stored.menuOrder.length
+          ? stored.menuOrder
+          : this.menuItems.map(item => item.id)
+        this.hiddenMenuItemIds = Array.isArray(stored?.hiddenMenuItemIds) ? stored.hiddenMenuItemIds : []
+        this.submenuOrder = stored?.submenuOrder && typeof stored.submenuOrder === 'object'
+          ? stored.submenuOrder
+          : this.buildDefaultSubmenuOrder()
+        this.hiddenSubmenuItemIds = Array.isArray(stored?.hiddenSubmenuItemIds) ? stored.hiddenSubmenuItemIds : []
+        this.menuParentMap = stored?.menuParentMap && typeof stored.menuParentMap === 'object' ? stored.menuParentMap : {}
       } catch {
         this.menuOrder = this.menuItems.map(item => item.id)
         this.hiddenMenuItemIds = []
@@ -282,12 +296,19 @@ export default {
       }
     },
     saveMenuPreferences() {
-      localStorage.setItem(this.getMenuStorageKey('customMenus'), JSON.stringify(this.customMainMenuItems))
-      localStorage.setItem(this.getMenuStorageKey('order'), JSON.stringify(this.menuOrder))
-      localStorage.setItem(this.getMenuStorageKey('hidden'), JSON.stringify(this.hiddenMenuItemIds))
-      localStorage.setItem(this.getMenuStorageKey('subOrder'), JSON.stringify(this.submenuOrder))
-      localStorage.setItem(this.getMenuStorageKey('subHidden'), JSON.stringify(this.hiddenSubmenuItemIds))
-      localStorage.setItem(this.getMenuStorageKey('parentMap'), JSON.stringify(this.menuParentMap))
+      const userId = Number(this.currentUser?.userId)
+      if (!Number.isFinite(userId) || userId <= 0) return
+
+      db.saveUserMenuPreferences(userId, {
+        customMainMenuItems: this.customMainMenuItems,
+        menuOrder: this.menuOrder,
+        hiddenMenuItemIds: this.hiddenMenuItemIds,
+        submenuOrder: this.submenuOrder,
+        hiddenSubmenuItemIds: this.hiddenSubmenuItemIds,
+        menuParentMap: this.menuParentMap
+      }).catch(error => {
+        console.error('Erreur sauvegarde préférences menu:', error)
+      })
     },
     moveMenuItem(itemId, direction) {
       const list = [...this.editableMenuItems]
@@ -477,9 +498,9 @@ export default {
     }
   },
   watch: {
-    '$route'() {
+    async '$route'() {
       this.currentUser = auth.getSession()
-      this.loadMenuPreferences()
+      await this.loadMenuPreferences()
       if (this.isLoginPage || !this.currentUser) return
       // Recharger les sprints quand on change de route
       this.loadSprints()
@@ -590,6 +611,11 @@ body {
 .nav-links a:hover,
 .nav-links a.router-link-active {
   background: rgba(255, 255, 255, 0.2);
+}
+
+.admin-nav-link {
+  border: 1px solid rgba(255, 255, 255, 0.5) !important;
+  font-weight: 500;
 }
 
 .dropdown {
