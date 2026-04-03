@@ -128,6 +128,7 @@ const BASE_MENU_ITEMS = [
       { id: 'tasks', label: '✅ Tâches', to: '/tasks' }
     ]
   },
+  { id: 'recettes', type: 'link', label: '🧪 Recettes', to: '/recettes' },
   { id: 'documents', type: 'link', label: '📁 Documents', to: '/documents' },
   { id: 'passwords', type: 'link', label: '🔐 Mots de passe', to: '/passwords' },
   { id: 'users', type: 'link', label: '👥 Utilisateurs', to: '/users', adminOnly: true },

@@ -26,7 +26,84 @@
         </template>
         <button v-if="selectMode" @click="selectAll" class="btn btn-secondary">{{ allSelected ? '☐ Tout désélectionner' : '☑️ Tout sélectionner' }}</button>
         <button @click="toggleSelectMode" class="btn btn-secondary" v-if="filteredTickets.length > 0">{{ selectMode ? '✖ Fermer sélection' : '☑️ Sélection multiple' }}</button>
+        <button @click="openEmailImport" class="btn btn-secondary">📥 Importer un email</button>
         <button @click="showForm = true" class="btn btn-primary">+ Nouveau ticket</button>
+      </div>
+    </div>
+
+    <div v-if="showEmailImport" class="card">
+      <h3>📥 Créer un ticket depuis un email</h3>
+      <div class="form-group">
+        <label>Source</label>
+        <select v-model="emailImportMode">
+          <option value="raw">Coller un email brut</option>
+          <option value="imap">Boîte IMAP</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Projet *</label>
+        <select v-model="emailImportForm.projectId" required>
+          <option value="">Sélectionner un projet</option>
+          <option v-for="project in projects" :key="`import-project-${project.id}`" :value="project.id">
+            {{ project.name }}
+          </option>
+        </select>
+      </div>
+      <div v-if="emailImportMode === 'raw'" class="form-group">
+        <label>Email brut</label>
+        <textarea v-model="emailImportForm.rawEmail" rows="10" placeholder="Collez ici le contenu complet du mail (From/Subject/Date + corps)..."></textarea>
+      </div>
+      <div v-if="emailImportMode === 'raw'" style="display:flex; gap:0.75rem; flex-wrap:wrap; margin-bottom:1rem;">
+        <button type="button" class="btn btn-secondary" @click="parseImportedEmail" :disabled="!emailImportForm.rawEmail.trim()">🔎 Analyser l'email</button>
+        <button type="button" class="btn btn-secondary" @click="cancelEmailImport">Annuler</button>
+      </div>
+
+      <div v-if="emailImportMode === 'imap'" style="display:flex; gap:0.75rem; flex-wrap:wrap; margin-bottom:1rem;">
+        <button type="button" class="btn btn-secondary" @click="loadImapMessages" :disabled="imapLoadingMessages">{{ imapLoadingMessages ? 'Chargement…' : '📥 Charger les emails IMAP' }}</button>
+        <button type="button" class="btn btn-secondary" @click="cancelEmailImport">Annuler</button>
+      </div>
+
+      <div v-if="emailImportMode === 'imap' && imapError" class="alert alert-danger" style="margin-bottom:1rem;">
+        {{ imapError }}
+      </div>
+
+      <div v-if="emailImportMode === 'imap' && imapMessages.length > 0" class="card" style="background:#f8f9fa; border:1px solid #e0e0e0; margin-bottom:1rem;">
+        <h4>Emails IMAP disponibles</h4>
+        <div v-for="message in imapMessages" :key="message.uid" class="note-card" :style="selectedImapMessage?.uid === message.uid ? 'border:2px solid #4DBA87;' : ''">
+          <div style="display:flex; justify-content:space-between; gap:1rem; align-items:flex-start;">
+            <div>
+              <div><strong>{{ message.subject }}</strong></div>
+              <small style="color:#666; display:block; margin-top:0.25rem;">{{ message.from || 'Expéditeur inconnu' }}<span v-if="message.date"> • {{ formatDate(message.date) }}</span></small>
+              <div style="margin-top:0.35rem; color:#555; white-space:pre-wrap;">{{ message.preview }}</div>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" @click="selectImapMessage(message)">Choisir</button>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="emailImportPreview" class="card" style="background:#f8f9fa; border:1px solid #e0e0e0;">
+        <h4>Aperçu du ticket généré</h4>
+        <div class="form-group">
+          <label>Titre</label>
+          <input v-model="emailImportPreview.title" />
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Expéditeur</label>
+            <input v-model="emailImportPreview.from" />
+          </div>
+          <div class="form-group">
+            <label>Date du mail</label>
+            <input v-model="emailImportPreview.date" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Description du ticket</label>
+          <textarea v-model="emailImportPreview.description" rows="8"></textarea>
+        </div>
+        <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
+          <button type="button" class="btn btn-primary" @click="createTicketFromImportedEmail" :disabled="!emailImportPreview.title || !emailImportForm.projectId">✅ Créer le ticket</button>
+        </div>
       </div>
     </div>
 
@@ -214,7 +291,10 @@
 import { db } from '../services/database-new'
 import { auth } from '../services/auth'
 import { odooService } from '../services/odoo-new'
+import { apiFetch } from '../services/api'
 import RichTextEditor from './RichTextEditor.vue'
+
+const MAIL_CONFIG_KEY = 'app-mail-config'
 
 export default {
   name: 'TicketsList',
@@ -236,6 +316,8 @@ export default {
       filterOnlyFavorites: true,
       searchQuery: '',
       showForm: false,
+      showEmailImport: false,
+      emailImportMode: 'raw',
       selectMode: false,
       selectedTickets: [],
       bulkStatusChange: '',
@@ -251,7 +333,16 @@ export default {
       formOptions: {
         addToTodo: false,
         addToCurrentSprint: false
-      }
+      },
+      emailImportForm: {
+        projectId: '',
+        rawEmail: ''
+      },
+      emailImportPreview: null,
+      imapLoadingMessages: false,
+      imapError: '',
+      imapMessages: [],
+      selectedImapMessage: null
     }
   },
   computed: {
@@ -382,6 +473,176 @@ export default {
 
       await this.loadData()
       this.cancelForm()
+    },
+    openEmailImport() {
+      this.showEmailImport = true
+      this.emailImportMode = 'raw'
+      this.emailImportPreview = null
+      this.imapError = ''
+      this.imapMessages = []
+      this.selectedImapMessage = null
+    },
+    cancelEmailImport() {
+      this.showEmailImport = false
+      this.emailImportMode = 'raw'
+      this.emailImportForm = {
+        projectId: '',
+        rawEmail: ''
+      }
+      this.emailImportPreview = null
+      this.imapLoadingMessages = false
+      this.imapError = ''
+      this.imapMessages = []
+      this.selectedImapMessage = null
+    },
+    getSavedMailConfig() {
+      try {
+        const raw = localStorage.getItem(MAIL_CONFIG_KEY)
+        if (!raw) return null
+        return JSON.parse(raw)
+      } catch {
+        return null
+      }
+    },
+    buildImapConfigFromSavedMail() {
+      const config = this.getSavedMailConfig()
+      if (!config?.imapEnabled) return null
+      return {
+        host: config.imapHost,
+        port: config.imapPort,
+        username: config.imapUsername,
+        password: config.imapPassword,
+        security: config.imapSecurity,
+        mailbox: config.imapMailbox,
+        rejectUnauthorized: config.imapRejectUnauthorized,
+        maxMessages: 20
+      }
+    },
+    async loadImapMessages() {
+      this.imapLoadingMessages = true
+      this.imapError = ''
+      this.imapMessages = []
+      this.selectedImapMessage = null
+      this.emailImportPreview = null
+      try {
+        const config = this.buildImapConfigFromSavedMail()
+        if (!config) {
+          throw new Error('Configuration IMAP absente ou désactivée dans Administration > Mail')
+        }
+
+        const result = await apiFetch('/admin/imap/messages', {
+          method: 'POST',
+          timeoutMs: 25000,
+          body: JSON.stringify({ config })
+        })
+
+        this.imapMessages = Array.isArray(result?.messages) ? result.messages : []
+        if (result?.usedFallback) {
+          this.imapError = `ℹ️ Connexion IMAP établie en mode ${String(result.effectiveSecurity || '').toUpperCase()} / port ${result.effectivePort}. Mettez à jour la config dans Administration > Mail.`
+        }
+        if (this.imapMessages.length === 0) {
+          this.imapError = 'Aucun email trouvé dans la boîte IMAP.'
+        }
+      } catch (error) {
+        this.imapError = error?.message || 'Erreur lors du chargement IMAP'
+      } finally {
+        this.imapLoadingMessages = false
+      }
+    },
+    selectImapMessage(message) {
+      this.selectedImapMessage = message
+      const descriptionParts = [
+        message.from ? `Email reçu de : ${message.from}` : '',
+        message.date ? `Date : ${message.date}` : '',
+        '',
+        message.body || message.preview || ''
+      ].filter(Boolean)
+
+      this.emailImportPreview = {
+        from: message.from || '',
+        subject: message.subject || '(Sans objet)',
+        date: message.date || '',
+        title: message.subject || '(Sans objet)',
+        description: descriptionParts.join('\n'),
+        body: message.body || message.preview || '',
+        messageId: message.messageId || null,
+        rawEmail: message.body || message.preview || ''
+      }
+    },
+    parseImportedEmail() {
+      const raw = String(this.emailImportForm.rawEmail || '').replace(/\r\n/g, '\n')
+      if (!raw.trim()) return
+
+      const headers = {}
+      const lines = raw.split('\n')
+      let bodyStartIndex = lines.findIndex(line => !line.trim())
+      if (bodyStartIndex === -1) bodyStartIndex = Math.min(lines.length, 8)
+
+      for (let index = 0; index < bodyStartIndex; index += 1) {
+        const line = lines[index]
+        const match = line.match(/^([A-Za-zÀ-ÿ-]+)\s*:\s*(.+)$/)
+        if (!match) continue
+        headers[match[1].toLowerCase()] = match[2].trim()
+      }
+
+      const body = lines.slice(bodyStartIndex + 1).join('\n').trim() || raw.trim()
+      const from = headers.from || headers.de || ''
+      const subject = headers.subject || headers.objet || '(Sans objet)'
+      const date = headers.date || ''
+
+      const cleanSender = from.replace(/[<>]/g, '').trim()
+      const descriptionParts = [
+        cleanSender ? `Email reçu de : ${cleanSender}` : '',
+        date ? `Date : ${date}` : '',
+        '',
+        body
+      ].filter(Boolean)
+
+      this.emailImportPreview = {
+        from: cleanSender,
+        subject,
+        date,
+        title: subject,
+        description: descriptionParts.join('\n'),
+        body
+      }
+    },
+    async createTicketFromImportedEmail() {
+      if (!this.emailImportPreview || !this.emailImportForm.projectId) return
+
+      const projectId = Number(this.emailImportForm.projectId)
+      const preview = this.emailImportPreview
+      const createdTicketKey = await db.addTicket({
+        projectId,
+        title: preview.title,
+        description: preview.description,
+        status: 'todo',
+        priority: 'medium',
+        assignedUserId: this.currentUserId,
+        emailHistory: [
+          {
+            id: Date.now(),
+            direction: 'incoming',
+            from: preview.from,
+            to: [],
+            subject: preview.subject,
+            body: this.emailImportMode === 'imap' ? (preview.rawEmail || preview.body || '') : this.emailImportForm.rawEmail,
+            parsedBody: preview.body,
+            messageId: preview.messageId || null,
+            status: 'received',
+            createdAt: preview.date || new Date().toISOString()
+          }
+        ]
+      })
+
+      await this.loadData()
+      const ticketId = Number(createdTicketKey)
+      this.cancelEmailImport()
+      if (Number.isFinite(ticketId) && ticketId > 0) {
+        this.$router.push(`/tickets/${ticketId}`)
+        return
+      }
+      alert('✅ Ticket créé depuis l\'email')
     },
     cancelForm() {
       this.showForm = false

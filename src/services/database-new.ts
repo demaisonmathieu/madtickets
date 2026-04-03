@@ -2,7 +2,7 @@ import { openDB, IDBPDatabase } from 'idb';
 import { apiFetch } from './api';
 
 const DB_NAME = 'tickets-db';
-const DB_VERSION = 17;
+const DB_VERSION = 18;
 const SESSION_KEY = 'tickets.auth.session';
 
 // Types
@@ -38,6 +38,16 @@ export interface Project {
   clientEmail?: string;
   prodUrl?: string;
   preprodUrl?: string;
+  githubRepoUrl?: string;
+  githubRepoOwner?: string;
+  githubRepoName?: string;
+  githubDefaultBranch?: string;
+  githubPrivate?: boolean;
+  gitlabRepoUrl?: string;
+  gitlabProjectPath?: string;
+  gitlabProjectId?: number | null;
+  gitlabDefaultBranch?: string;
+  gitlabPrivate?: boolean;
   status?: string;
   assignedUserId?: number | null;
   followerUserIds?: number[];
@@ -52,6 +62,21 @@ export interface Project {
   // Partage des recettes
   recetteShareToken?: string | null;
   testAccounts?: TestAccount[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Recette {
+  id?: number;
+  name: string;
+  description?: string;
+  projectId?: number | null;
+  sprintId?: number | null;
+  preprodUrl?: string;
+  prodUrl?: string;
+  testAccounts?: TestAccount[];
+  shareToken?: string;
+  createdByUserId?: number | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -75,7 +100,10 @@ export interface Attachment {
 export interface UserStory {
   id: number;
   title: string;
+  recettePhase?: string;
   description?: string;
+  comment?: string;
+  commentUpdatedAt?: string;
   acceptanceCriteria?: string;
   acceptanceCriteriaItems?: {
     id: number;
@@ -85,6 +113,8 @@ export interface UserStory {
     checkedByUserId?: number | null;
   }[];
   status?: 'todo' | 'in-progress' | 'done';
+  createdByUserId?: number | null;
+  updatedByUserId?: number | null;
   createdAt: string;
   updatedAt?: string;
 }
@@ -98,6 +128,21 @@ export interface RecetteHistoryEntry {
   coveragePercent?: number;
   checkedCriteria?: number;
   totalCriteria?: number;
+}
+
+export interface EmailHistoryEntry {
+  id: number;
+  direction: 'incoming' | 'outgoing';
+  provider?: string;
+  from?: string;
+  to?: string[];
+  cc?: string[];
+  subject: string;
+  body?: string;
+  parsedBody?: string;
+  messageId?: string | null;
+  status?: 'sent' | 'received' | 'draft' | 'failed';
+  createdAt: string;
 }
 
 export interface GanttAssignment {
@@ -125,7 +170,9 @@ export interface Ticket {
   recetteHistory?: RecetteHistoryEntry[];
   assignedUserId?: number | null;
   sprintId?: number | null;
+  recetteId?: number | null;
   notes?: Note[];
+  emailHistory?: EmailHistoryEntry[];
   userStories?: UserStory[];
   attachments?: Attachment[];
   ganttAssignments?: GanttAssignment[];
@@ -198,6 +245,7 @@ export interface LocalTask {
   id?: number;
   projectId: number;
   sprintId?: number | null;
+  recetteId?: number | null;
   stageId?: number | null;
   title: string;
   description?: string;
@@ -441,6 +489,13 @@ class DatabaseService {
           ticketStore.createIndex('status', 'status');
         }
 
+        if (oldVersion < 18 && db.objectStoreNames.contains('tickets')) {
+          const ticketStore = transaction.objectStore('tickets');
+          if (!ticketStore.indexNames.contains('recetteId')) {
+            ticketStore.createIndex('recetteId', 'recetteId');
+          }
+        }
+
         // Store pour la todolist
         if (!db.objectStoreNames.contains('todos')) {
           const todoStore = db.createObjectStore('todos', { keyPath: 'id', autoIncrement: true });
@@ -494,6 +549,20 @@ class DatabaseService {
           localTaskStore.createIndex('status', 'status');
         }
 
+        if (oldVersion < 18 && db.objectStoreNames.contains('localTasks')) {
+          const localTaskStore = transaction.objectStore('localTasks');
+          if (!localTaskStore.indexNames.contains('recetteId')) {
+            localTaskStore.createIndex('recetteId', 'recetteId');
+          }
+        }
+
+        if (!db.objectStoreNames.contains('recettes')) {
+          const recetteStore = db.createObjectStore('recettes', { keyPath: 'id', autoIncrement: true });
+          recetteStore.createIndex('projectId', 'projectId');
+          recetteStore.createIndex('sprintId', 'sprintId');
+          recetteStore.createIndex('shareToken', 'shareToken', { unique: true });
+        }
+
         // Store pour le gestionnaire de mots de passe (nouveau en v12)
         if (!db.objectStoreNames.contains('passwords')) {
           const passwordStore = db.createObjectStore('passwords', { keyPath: 'id', autoIncrement: true });
@@ -544,6 +613,71 @@ class DatabaseService {
   async getProject(id: number): Promise<Project> {
     const project = await this.db!.get('projects', id);
     return this.ensureAccessibleProject(project);
+  }
+
+  // ===== RECETTES =====
+  async getAllRecettes(): Promise<Recette[]> {
+    const visibleProjectIds = await this.getVisibleProjectIdSet();
+    const recettes = await this.db!.getAll('recettes');
+    return recettes.filter(recette => {
+      if (!Number.isFinite(Number(recette.projectId)) || Number(recette.projectId) <= 0) return true;
+      return visibleProjectIds.has(Number(recette.projectId));
+    });
+  }
+
+  async getRecette(id: number): Promise<Recette> {
+    const recette = await this.db!.get('recettes', id);
+    if (!recette) {
+      throw new Error('Recette introuvable');
+    }
+    return recette;
+  }
+
+  async addRecette(recette: Recette): Promise<IDBValidKey> {
+    return await this.db!.add('recettes', {
+      ...recette,
+      projectId: recette.projectId ?? null,
+      sprintId: recette.sprintId ?? null,
+      preprodUrl: recette.preprodUrl || '',
+      prodUrl: recette.prodUrl || '',
+      testAccounts: recette.testAccounts || [],
+      shareToken: recette.shareToken || crypto.randomUUID(),
+      createdByUserId: recette.createdByUserId ?? null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  async updateRecette(id: number, updates: Partial<Recette>): Promise<IDBValidKey> {
+    const existing = await this.getRecette(id);
+    return await this.db!.put('recettes', {
+      ...existing,
+      ...updates,
+      id,
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  async deleteRecette(id: number): Promise<void> {
+    const tickets = await this.getTicketsByRecette(id);
+    for (const ticket of tickets) {
+      await this.updateTicket(ticket.id!, { recetteId: null });
+    }
+    const localTasks = await this.getLocalTasksByRecette(id);
+    for (const task of localTasks) {
+      await this.updateLocalTask(task.id!, { recetteId: null });
+    }
+    await this.db!.delete('recettes', id);
+  }
+
+  async getTicketsByRecette(recetteId: number): Promise<Ticket[]> {
+    const allTickets = await this.getAllTickets();
+    return allTickets.filter(ticket => Number(ticket.recetteId) === Number(recetteId));
+  }
+
+  async getLocalTasksByRecette(recetteId: number): Promise<LocalTask[]> {
+    const allTasks = await this.getAllLocalTasks();
+    return allTasks.filter(task => Number(task.recetteId) === Number(recetteId));
   }
 
   async addProject(project: Project): Promise<IDBValidKey> {
@@ -627,8 +761,10 @@ class DatabaseService {
       recetteComment: ticket.recetteComment || '',
       recetteDate: ticket.recetteDate || null,
       recetteByUserId: ticket.recetteByUserId ?? null,
+      recetteId: ticket.recetteId ?? null,
       recetteHistory: ticket.recetteHistory || [],
       notes: ticket.notes || [],
+      emailHistory: ticket.emailHistory || [],
       userStories: ticket.userStories || [],
       attachments: ticket.attachments || [],
       createdAt: ticket.createdAt || new Date().toISOString(),
@@ -1030,6 +1166,7 @@ class DatabaseService {
       version: DB_VERSION,
       exportDate: new Date().toISOString(),
       projects: await this.getAllProjects(),
+      recettes: await this.getAllRecettes(),
       tickets: await this.getAllTickets(),
       sprints: await this.getAllSprints(),
       todos: await this.getAllTodos(),
@@ -1053,10 +1190,11 @@ class DatabaseService {
       if (clearExisting) {
         // Vider toutes les tables
         const tx = this.db!.transaction(
-          ['projects', 'tickets', 'sprints', 'todos', 'timeEntries', 'odooTasks', 'localTasks', 'passwords', 'users'],
+          ['projects', 'recettes', 'tickets', 'sprints', 'todos', 'timeEntries', 'odooTasks', 'localTasks', 'passwords', 'users'],
           'readwrite'
         );
         await tx.objectStore('projects').clear();
+        await tx.objectStore('recettes').clear();
         await tx.objectStore('tickets').clear();
         await tx.objectStore('sprints').clear();
         await tx.objectStore('todos').clear();
@@ -1078,6 +1216,20 @@ class DatabaseService {
             const existing = await this.db!.get('projects', project.id);
             if (!existing) {
               await this.db!.add('projects', project);
+            }
+          }
+        }
+      }
+
+      // Importer les tickets
+      if (data.recettes) {
+        for (const recette of data.recettes) {
+          if (clearExisting) {
+            await this.db!.add('recettes', recette);
+          } else {
+            const existing = await this.db!.get('recettes', recette.id);
+            if (!existing) {
+              await this.db!.add('recettes', recette);
             }
           }
         }
@@ -1221,6 +1373,7 @@ class DatabaseService {
   async addLocalTask(task: LocalTask): Promise<IDBValidKey> {
     const serialized = JSON.parse(JSON.stringify({
       ...task,
+      recetteId: task.recetteId ?? null,
       attachments: task.attachments || [],
       createdAt: task.createdAt || new Date().toISOString(),
       updatedAt: task.updatedAt || new Date().toISOString()
@@ -1573,10 +1726,12 @@ class RemoteDatabaseService extends DatabaseService {
       recetteComment: ticket.recetteComment || '',
       recetteDate: ticket.recetteDate || null,
       recetteByUserId: ticket.recetteByUserId ?? null,
+      recetteId: ticket.recetteId ?? null,
       recetteHistory: ticket.recetteHistory || [],
       assignedUserId: ticket.assignedUserId ?? null,
       sprintId: ticket.sprintId ?? null,
       notes: ticket.notes || [],
+      emailHistory: ticket.emailHistory || [],
       userStories: ticket.userStories || [],
       attachments: ticket.attachments || [],
       createdAt: ticket.createdAt || now,
@@ -1889,6 +2044,7 @@ class RemoteDatabaseService extends DatabaseService {
       version: DB_VERSION,
       exportDate: new Date().toISOString(),
       projects: await this.getAllProjects(),
+      recettes: await this.getAllRecettes(),
       tickets: await this.getAllTickets(),
       sprints: await this.getAllSprints(),
       todos: await this.getAllTodos(),
@@ -1917,6 +2073,9 @@ class RemoteDatabaseService extends DatabaseService {
     }
     if (data.projects) {
       for (const project of data.projects) await this.rpc('addProject', [project]);
+    }
+    if (data.recettes) {
+      for (const recette of data.recettes) await this.rpc('addRecette', [recette]);
     }
     if (data.sprints) {
       for (const sprint of data.sprints) await this.rpc('addSprint', [sprint]);
@@ -1964,6 +2123,7 @@ class RemoteDatabaseService extends DatabaseService {
     const now = new Date().toISOString();
     const created = await this.rpc<LocalTask>('addLocalTask', [{
       ...task,
+      recetteId: task.recetteId ?? null,
       attachments: task.attachments || [],
       createdAt: task.createdAt || now,
       updatedAt: task.updatedAt || now
@@ -1980,6 +2140,55 @@ class RemoteDatabaseService extends DatabaseService {
 
   async deleteLocalTask(id: number): Promise<void> {
     await this.rpc('deleteLocalTask', [id]);
+  }
+
+  async getAllRecettes(): Promise<Recette[]> {
+    const visibleProjectIds = new Set((await this.getAllProjects()).map(project => Number(project.id)));
+    const recettes = await this.rpc<Recette[]>('getAllRecettes');
+    return recettes.filter(recette => {
+      if (!Number.isFinite(Number(recette.projectId)) || Number(recette.projectId) <= 0) return true;
+      return visibleProjectIds.has(Number(recette.projectId));
+    });
+  }
+
+  async getRecette(id: number): Promise<Recette> {
+    return this.rpc<Recette>('getRecette', [id]);
+  }
+
+  async addRecette(recette: Recette): Promise<IDBValidKey> {
+    const now = new Date().toISOString();
+    const created = await this.rpc<Recette>('addRecette', [{
+      ...recette,
+      projectId: recette.projectId ?? null,
+      sprintId: recette.sprintId ?? null,
+      preprodUrl: recette.preprodUrl || '',
+      prodUrl: recette.prodUrl || '',
+      testAccounts: recette.testAccounts || [],
+      shareToken: recette.shareToken || crypto.randomUUID(),
+      createdByUserId: recette.createdByUserId ?? null,
+      createdAt: recette.createdAt || now,
+      updatedAt: recette.updatedAt || now
+    }]);
+    return this.extractId(created);
+  }
+
+  async updateRecette(id: number, updates: Partial<Recette>): Promise<IDBValidKey> {
+    const updated = await this.rpc<Recette>('updateRecette', [id, updates]);
+    return this.extractId(updated);
+  }
+
+  async deleteRecette(id: number): Promise<void> {
+    await this.rpc('deleteRecette', [id]);
+  }
+
+  async getTicketsByRecette(recetteId: number): Promise<Ticket[]> {
+    const tickets = await this.getAllTickets();
+    return tickets.filter(ticket => Number(ticket.recetteId) === Number(recetteId));
+  }
+
+  async getLocalTasksByRecette(recetteId: number): Promise<LocalTask[]> {
+    const tasks = await this.getAllLocalTasks();
+    return tasks.filter(task => Number(task.recetteId) === Number(recetteId));
   }
 
   // ===== KANBAN STAGES (Remote) =====

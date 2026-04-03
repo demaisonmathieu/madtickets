@@ -18,6 +18,143 @@
       </div>
     </div>
 
+    <!-- Onglets de navigation -->
+    <div class="dashboard-tabs">
+      <button type="button" class="dashboard-tab" :class="{ active: activeTab === 'activites' }" @click="activeTab = 'activites'; scrollToTop()">🧾 Activités récentes</button>
+      <button type="button" class="dashboard-tab" :class="{ active: activeTab === 'tableau' }" @click="activeTab = 'tableau'; scrollToTop()">📊 Tableau de bord</button>
+      <button type="button" class="dashboard-tab" :class="{ active: activeTab === 'progression' }" @click="activeTab = 'progression'; scrollToTop()">📈 Progression</button>
+      <button type="button" class="dashboard-tab" :class="{ active: activeTab === 'temps' }" @click="activeTab = 'temps'; scrollToTop()">⏱️ Feuilles de temps</button>
+    </div>
+
+    <div v-show="activeTab === 'activites'">
+    <!-- Résumé d'activité tickets / tâches (section principale) -->
+    <div class="charts-section">
+      <div class="activity-section-header">
+        <h3>🧾 Activité récente – tickets / tâches</h3>
+        <div class="activity-days-selector">
+          <button
+            v-for="opt in activityDaysOptions"
+            :key="opt.value"
+            type="button"
+            class="days-btn"
+            :class="{ active: activityDaysFilter === opt.value }"
+            @click="activityDaysFilter = opt.value"
+          >{{ opt.label }}</button>
+        </div>
+      </div>
+
+      <div class="activity-summary-grid">
+        <button
+          type="button"
+          class="priority-card activity-filter-card"
+          :class="{ active: activityTypeFilter === 'created' }"
+          @click="setActivityTypeFilter('created')"
+        >
+          <div class="priority-icon">🆕</div>
+          <div class="priority-count">{{ recentActivitySummary.created }}</div>
+          <div class="priority-label">Créations</div>
+        </button>
+        <button
+          type="button"
+          class="priority-card activity-filter-card"
+          :class="{ active: activityTypeFilter === 'updated' }"
+          @click="setActivityTypeFilter('updated')"
+        >
+          <div class="priority-icon">✏️</div>
+          <div class="priority-count">{{ recentActivitySummary.updated }}</div>
+          <div class="priority-label">Modifications</div>
+        </button>
+        <button
+          type="button"
+          class="priority-card activity-filter-card"
+          :class="{ active: activityTypeFilter === 'notes' }"
+          @click="setActivityTypeFilter('notes')"
+        >
+          <div class="priority-icon">📝</div>
+          <div class="priority-count">{{ recentActivitySummary.notes }}</div>
+          <div class="priority-label">Notes</div>
+        </button>
+        <button
+          type="button"
+          class="priority-card activity-filter-card"
+          :class="{ active: activityTypeFilter === 'recettes' }"
+          @click="setActivityTypeFilter('recettes')"
+        >
+          <div class="priority-icon">🧪</div>
+          <div class="priority-count">{{ recentActivitySummary.recettes }}</div>
+          <div class="priority-label">Recettes</div>
+        </button>
+        <button
+          type="button"
+          class="priority-card activity-filter-card"
+          :class="{ active: activityTypeFilter === 'messages' }"
+          @click="setActivityTypeFilter('messages')"
+        >
+          <div class="priority-icon">💬</div>
+          <div class="priority-count">{{ recentActivitySummary.messages }}</div>
+          <div class="priority-label">Messages</div>
+        </button>
+      </div>
+
+      <div class="activity-filter-actions">
+        <button
+          type="button"
+          class="btn btn-secondary"
+          :disabled="activityTypeFilter === 'all'"
+          @click="setActivityTypeFilter('all')"
+        >
+          Afficher tout
+        </button>
+        <span v-if="activityTypeFilter !== 'all'" class="activity-filter-label">
+          Filtre actif : {{ getActivityTypeLabel(activityTypeFilter) }}
+        </span>
+        <span class="activity-filter-label" style="margin-left: auto; color: #999;">
+          {{ filteredRecentEntityActivities.length }} activité(s)
+        </span>
+      </div>
+
+      <div class="activity-search-bar">
+        <span class="activity-search-icon">🔍</span>
+        <input
+          v-model="activitySearchQuery"
+          type="text"
+          placeholder="Rechercher dans les activités (titre, projet, description)..."
+          class="activity-search-input"
+        />
+        <button v-if="activitySearchQuery" type="button" class="activity-search-clear" @click="activitySearchQuery = ''">✕</button>
+      </div>
+
+      <div class="recent-activity" style="margin-top: 1rem;">
+        <div v-if="filteredRecentEntityActivities.length === 0" class="empty-state">
+          Aucune activité sur cette période
+        </div>
+
+        <div
+          v-for="item in filteredRecentEntityActivities"
+          :key="item.key"
+          class="activity-item clickable-activity"
+          @click="openActivityItem(item)"
+        >
+          <div class="activity-icon">{{ item.icon }}</div>
+          <div class="activity-content">
+            <div class="activity-title">{{ item.title }}</div>
+            <div class="activity-meta" style="flex-wrap: wrap;">
+              <span class="badge badge-info">{{ item.typeLabel }}</span>
+              <span>📁 {{ item.projectName || 'Projet inconnu' }}</span>
+              <span class="activity-date">{{ formatDate(item.date) }}</span>
+            </div>
+            <div
+              v-if="item.description"
+              class="activity-description"
+              v-html="truncateHtml(item.description, 500)"
+            ></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    </div><!-- /tab activites -->
+
+    <div v-show="activeTab === 'tableau'">
     <!-- Filtres -->
     <div class="filters-container">
       <div class="filters-header">
@@ -215,27 +352,12 @@
         </div>
       </div>
     </div>
+    </div><!-- /tab tableau -->
 
-    <!-- Résumé FDT semaine par utilisateur -->
-    <div class="charts-section">
-      <h3>👥 Feuilles de temps de la semaine par utilisateur</h3>
-      <div class="recent-activity">
-        <div v-if="weeklyTimeByUser.length === 0" class="empty-state">
-          Aucune feuille de temps cette semaine
-        </div>
-        <div v-for="item in weeklyTimeByUser" :key="`weekly-user-${item.userId || 'na'}`" class="activity-item">
-          <div class="activity-icon">⏱️</div>
-          <div class="activity-content">
-            <div class="activity-title">{{ getUserDisplayName(item.userId) }}</div>
-            <div class="activity-meta">
-              <span class="badge badge-info">{{ formatDuration(item.totalMinutes) }}</span>
-              <span class="activity-date">{{ item.entriesCount }} entrée(s)</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <div v-show="activeTab === 'temps'">
+    </div><!-- /tab temps -->
 
+    <div v-show="activeTab === 'progression'">
     <!-- Graphiques de progression -->
     <div class="charts-section">
       <h3>📈 Progression par projet</h3>
@@ -281,26 +403,7 @@
         </div>
       </div>
     </div>
-
-    <!-- Activité récente -->
-    <div class="charts-section">
-      <h3>🕐 Activité récente</h3>
-      <div class="recent-activity">
-        <div v-if="recentTickets.length === 0" class="empty-state">
-          Aucune activité récente
-        </div>
-        <div v-for="ticket in recentTickets" :key="ticket.id" class="activity-item clickable-activity" @click="viewTicket(ticket.id)">
-          <div class="activity-icon">🎫</div>
-          <div class="activity-content">
-            <div class="activity-title">{{ ticket.title }}</div>
-            <div class="activity-meta">
-              <span class="badge" :class="getPriorityBadgeClass(ticket.priority)">{{ getPriorityLabel(ticket.priority) }}</span>
-              <span class="activity-date">{{ formatDate(ticket.createdAt) }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    </div><!-- /tab progression -->
 
     <!-- Modal Nouveau Projet -->
     <div v-if="showProjectModal" class="modal-overlay" @click.self="showProjectModal = false">
@@ -353,7 +456,7 @@
         <div class="modal-body">
           <div class="form-group">
             <label>Projet *</label>
-            <select v-model="newTicket.projectId">
+            <select v-model="newTicket.projectId" @change="onNewTicketProjectChange">
               <option :value="null">Sélectionnez un projet</option>
               <option v-for="project in projects" :key="project.id" :value="project.id">
                 {{ project.name }}
@@ -394,6 +497,124 @@
                 <option value="Terminé">Terminé</option>
               </select>
             </div>
+          </div>
+
+          <div v-if="selectedNewTicketProject" style="margin-top: 1rem; padding: 0.85rem; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc;">
+            <div v-if="!selectedProjectGithubRef" style="color:#64748b; font-size:0.92rem;">
+              🐙 Aucun dépôt GitHub lié à ce projet. Associez d'abord un dépôt dans la fiche projet.
+            </div>
+            <template v-else>
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem;">
+              <strong>🐙 GitHub lié : {{ selectedProjectGithubRef.owner }}/{{ selectedProjectGithubRef.repo }}</strong>
+              <button type="button" class="btn btn-secondary btn-sm" @click="loadGithubCommitsForNewTicket" :disabled="githubTicketCommitsLoading">
+                {{ githubTicketCommitsLoading ? '⏳ Chargement...' : '🔄 Rafraîchir commits' }}
+              </button>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 0.5rem;">
+              <label>Branche des commits (optionnel)</label>
+              <select v-model="githubTicketBranchInput" @change="loadGithubCommitsForNewTicket">
+                <option :value="selectedNewTicketProject?.githubDefaultBranch || 'main'">{{ githubTicketBranchesLoading ? 'Chargement des branches...' : `Branche par défaut (${selectedNewTicketProject?.githubDefaultBranch || 'main'})` }}</option>
+                <option v-for="branch in githubTicketBranches" :key="`dashboard-github-branch-${branch}`" :value="branch">{{ branch }}</option>
+              </select>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 0.5rem;">
+              <label style="display: inline-flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox" v-model="newTicketGithub.createBranch" style="width:auto;" />
+                Créer automatiquement une branche GitHub après création du ticket
+              </label>
+            </div>
+
+            <div v-if="newTicketGithub.createBranch" class="form-row">
+              <div class="form-group">
+                <label>Nom de branche (optionnel)</label>
+                <input v-model="newTicketGithub.branchName" type="text" placeholder="Ex: feat/mon-ticket" />
+              </div>
+              <div class="form-group">
+                <label>Token GitHub (requis pour créer la branche)</label>
+                <input v-model="githubTicketTokenInput" type="password" placeholder="ghp_..." />
+              </div>
+            </div>
+
+            <div v-if="githubTicketCommitsError" class="alert-inline alert-error" style="margin-top: 0.5rem;">
+              {{ githubTicketCommitsError }}
+            </div>
+
+            <div style="margin-top: 0.5rem; max-height: 180px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff;">
+              <div v-if="githubTicketCommits.length === 0" style="padding: 0.6rem; color: #64748b; font-size: 0.9rem;">Aucun commit chargé</div>
+              <button
+                v-for="commit in githubTicketCommits"
+                :key="commit.sha"
+                type="button"
+                @click="newTicketGithub.baseSha = commit.sha"
+                style="display: block; width: 100%; text-align: left; padding: 0.55rem 0.65rem; border: none; border-bottom: 1px solid #f1f5f9; background: transparent; cursor: pointer;"
+                :style="newTicketGithub.baseSha === commit.sha ? 'background:#eef2ff;' : ''"
+              >
+                <div style="font-size: 0.88rem; font-weight: 600; color: #1f2937;">{{ commit.message }}</div>
+                <div style="font-size: 0.78rem; color: #64748b;">{{ commit.sha.slice(0, 7) }} • {{ commit.author }} • {{ formatDate(commit.date) }}</div>
+              </button>
+            </div>
+            </template>
+          </div>
+
+          <div v-if="selectedNewTicketProject" style="margin-top: 1rem; padding: 0.85rem; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc;">
+            <div v-if="!selectedProjectGitlabRef" style="color:#64748b; font-size:0.92rem;">
+              🦊 Aucun projet GitLab lié à ce projet. Associez-le d'abord dans la fiche projet.
+            </div>
+            <template v-else>
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem;">
+              <strong>🦊 GitLab lié : {{ selectedProjectGitlabRef.projectPath }}</strong>
+              <button type="button" class="btn btn-secondary btn-sm" @click="loadGitlabCommitsForNewTicket" :disabled="gitlabTicketCommitsLoading">
+                {{ gitlabTicketCommitsLoading ? '⏳ Chargement...' : '🔄 Rafraîchir commits' }}
+              </button>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 0.5rem;">
+              <label>Branche des commits (optionnel)</label>
+              <select v-model="gitlabTicketBranchInput" @change="loadGitlabCommitsForNewTicket">
+                <option :value="selectedNewTicketProject?.gitlabDefaultBranch || 'main'">{{ gitlabTicketBranchesLoading ? 'Chargement des branches...' : `Branche par défaut (${selectedNewTicketProject?.gitlabDefaultBranch || 'main'})` }}</option>
+                <option v-for="branch in gitlabTicketBranches" :key="`dashboard-gitlab-branch-${branch}`" :value="branch">{{ branch }}</option>
+              </select>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 0.5rem;">
+              <label style="display: inline-flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox" v-model="newTicketGitlab.createBranch" style="width:auto;" />
+                Créer automatiquement une branche GitLab après création du ticket
+              </label>
+            </div>
+
+            <div v-if="newTicketGitlab.createBranch" class="form-row">
+              <div class="form-group">
+                <label>Nom de branche (optionnel)</label>
+                <input v-model="newTicketGitlab.branchName" type="text" placeholder="Ex: feat/mon-ticket" />
+              </div>
+              <div class="form-group">
+                <label>Token GitLab (requis pour créer la branche, scope `api`)</label>
+                <input v-model="gitlabTicketTokenInput" type="password" placeholder="glpat-..." />
+              </div>
+            </div>
+
+            <div v-if="gitlabTicketCommitsError" class="alert-inline alert-error" style="margin-top: 0.5rem;">
+              {{ gitlabTicketCommitsError }}
+            </div>
+
+            <div style="margin-top: 0.5rem; max-height: 180px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff;">
+              <div v-if="gitlabTicketCommits.length === 0" style="padding: 0.6rem; color: #64748b; font-size: 0.9rem;">Aucun commit chargé</div>
+              <button
+                v-for="commit in gitlabTicketCommits"
+                :key="`dashboard-gitlab-${commit.sha}`"
+                type="button"
+                @click="newTicketGitlab.baseSha = commit.sha"
+                style="display: block; width: 100%; text-align: left; padding: 0.55rem 0.65rem; border: none; border-bottom: 1px solid #f1f5f9; background: transparent; cursor: pointer;"
+                :style="newTicketGitlab.baseSha === commit.sha ? 'background:#fff7ed;' : ''"
+              >
+                <div style="font-size: 0.88rem; font-weight: 600; color: #1f2937;">{{ commit.message }}</div>
+                <div style="font-size: 0.78rem; color: #64748b;">{{ commit.sha.slice(0, 7) }} • {{ commit.author }} • {{ formatDate(commit.date) }}</div>
+              </button>
+            </div>
+            </template>
           </div>
         </div>
         <div class="modal-footer">
@@ -596,108 +817,6 @@
         </div>
       </div>
     </div>
-
-    <div class="charts-section">
-      <h3>📁 Feuilles de temps par projet / ticket</h3>
-      <div v-if="projectTimeSummary.length === 0" class="empty-state">
-        Aucune feuille de temps pour les filtres actuels
-      </div>
-      <div v-else class="project-time-groups">
-        <div v-for="project in projectTimeSummary" :key="`time-project-${project.projectId}`" class="project-time-card">
-          <div class="project-time-header">
-            <div>
-              <div class="activity-title">{{ project.projectName }}</div>
-              <div class="activity-meta">
-                <span class="badge badge-info">{{ formatDuration(project.totalMinutes) }}</span>
-                <span>{{ project.entriesCount }} entrée(s)</span>
-              </div>
-            </div>
-            <button @click="viewProject(project.projectId)" class="btn btn-secondary btn-sm">📁 Voir le projet</button>
-          </div>
-
-          <div class="ticket-time-list">
-            <div v-for="ticket in project.tickets" :key="`time-ticket-${ticket.ticketId}`" class="ticket-time-item clickable-activity" @click="viewTicket(ticket.ticketId)">
-              <div>
-                <div class="activity-title">{{ ticket.ticketTitle }}</div>
-                <div class="activity-meta">
-                  <span class="badge badge-info">{{ formatDuration(ticket.totalMinutes) }}</span>
-                  <span>{{ ticket.entriesCount }} entrée(s)</span>
-                  <span v-if="ticket.lastEntryDate" class="activity-date">{{ formatDate(ticket.lastEntryDate) }}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="charts-section">
-      <h3>🕒 Dernières feuilles de temps</h3>
-      <div class="recent-activity">
-        <div v-if="recentTimeEntries.length === 0" class="empty-state">
-          Aucune feuille de temps récente
-        </div>
-        <div
-          v-for="entry in recentTimeEntries"
-          :key="`recent-time-${entry.id}`"
-          class="activity-item"
-        >
-          <template v-if="editingTimeEntryId === entry.id">
-            <div class="activity-icon">✏️</div>
-            <div class="activity-content">
-              <div class="time-inline-edit-grid">
-                <div class="form-group">
-                  <label>Durée (min)</label>
-                  <input v-model.number="editingTimeEntry.duration" type="number" min="1" />
-                </div>
-                <div class="form-group">
-                  <label>Date</label>
-                  <input v-model="editingTimeEntry.date" type="date" />
-                </div>
-                <div class="form-group">
-                  <label>Utilisateur</label>
-                  <select v-model="editingTimeEntry.userId">
-                    <option :value="null">Non assigné</option>
-                    <option v-for="user in users" :key="`dash-inline-user-${user.id}`" :value="user.id">
-                      {{ user.displayName }} ({{ user.username }})
-                    </option>
-                  </select>
-                </div>
-                <div class="form-group time-inline-description">
-                  <label>Description</label>
-                  <input v-model="editingTimeEntry.description" type="text" placeholder="Travail effectué..." />
-                </div>
-              </div>
-              <div class="entry-inline-actions">
-                <button @click="saveDashboardTimeEntryEdit(entry)" class="btn btn-primary btn-sm">💾 Enregistrer</button>
-                <button @click="cancelDashboardTimeEntryEdit" class="btn btn-secondary btn-sm">Annuler</button>
-                <button @click="viewTicket(entry.ticketId)" class="btn btn-secondary btn-sm">🎫 Ticket</button>
-              </div>
-            </div>
-          </template>
-          <template v-else>
-            <div class="activity-icon clickable-activity" @click="viewTicket(entry.ticketId)">⏱️</div>
-            <div class="activity-content clickable-activity" @click="viewTicket(entry.ticketId)">
-            <div class="activity-title">{{ getTicketTitle(entry.ticketId) }}</div>
-            <div class="activity-meta" style="flex-wrap: wrap;">
-              <span class="badge badge-info">{{ formatDuration(entry.duration) }}</span>
-              <span>👤 {{ getUserDisplayName(entry.userId) }}</span>
-              <span>📁 {{ getProjectNameByTicketId(entry.ticketId) }}</span>
-              <span class="badge" :class="entry.synced ? 'badge-completed' : 'badge-pending'">{{ entry.synced ? 'Sync Odoo' : 'Local' }}</span>
-              <span class="activity-date">{{ formatDate(entry.date) }}</span>
-            </div>
-            <div v-if="entry.description" style="margin-top: 0.35rem; color: #666; font-size: 0.9rem;">
-              {{ entry.description }}
-            </div>
-            </div>
-            <div class="entry-inline-actions">
-              <button @click="startDashboardTimeEntryEdit(entry)" class="btn btn-secondary btn-sm">✏️ Modifier</button>
-              <button @click="viewTicket(entry.ticketId)" class="btn btn-primary btn-sm">🎫 Ticket</button>
-            </div>
-          </template>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -705,6 +824,8 @@
 import { db } from '../services/database-new'
 import { auth } from '../services/auth'
 import { odooService } from '../services/odoo-new'
+import { listGithubCommits, listGithubBranches, createGithubBranch, parseGithubRepoRef } from '../services/github'
+import { listGitlabCommits, listGitlabBranches, createGitlabBranch, parseGitlabRepoRef } from '../services/gitlab'
 
 export default {
   name: 'Dashboard',
@@ -712,6 +833,7 @@ export default {
     return {
       projects: [],
       users: [],
+      activeTab: 'activites',
       currentUserId: null,
       tickets: [],
       sprints: [],
@@ -721,7 +843,7 @@ export default {
       filters: {
         projectId: null,
         year: null,
-        period: 'all',
+        period: 'thisMonth',
         sprintId: null
       },
       myTimeEntriesOnly: false,
@@ -730,6 +852,7 @@ export default {
       allSprints: [],
       allLocalTasks: [],
       allOdooTasks: [],
+      allRecettes: [],
       // Modals
       showProjectModal: false,
       showTicketModal: false,
@@ -750,6 +873,30 @@ export default {
         status: 'À faire',
         assignedUserId: null
       },
+      newTicketGithub: {
+        createBranch: true,
+        branchName: '',
+        baseSha: ''
+      },
+      githubTicketTokenInput: localStorage.getItem('github.connector.token') || '',
+      githubTicketBranchInput: '',
+      githubTicketBranches: [],
+      githubTicketBranchesLoading: false,
+      githubTicketCommits: [],
+      githubTicketCommitsLoading: false,
+      githubTicketCommitsError: '',
+      newTicketGitlab: {
+        createBranch: true,
+        branchName: '',
+        baseSha: ''
+      },
+      gitlabTicketTokenInput: localStorage.getItem('gitlab.connector.token') || '',
+      gitlabTicketBranchInput: '',
+      gitlabTicketBranches: [],
+      gitlabTicketBranchesLoading: false,
+      gitlabTicketCommits: [],
+      gitlabTicketCommitsLoading: false,
+      gitlabTicketCommitsError: '',
       newTodo: {
         type: 'daily', // 'daily' ou 'project'
         text: '',
@@ -803,6 +950,16 @@ export default {
       },
       projectsWithTickets: [],
       recentTickets: [],
+      recentEntityActivities: [],
+      activityTypeFilter: 'all',
+      activitySearchQuery: '',
+      activityDaysFilter: null,
+      activityDaysOptions: [
+        { value: 7, label: '7j' },
+        { value: 30, label: '30j' },
+        { value: 90, label: '90j' },
+        { value: null, label: 'Tout' }
+      ],
       editingTimeEntryId: null,
       editingTimeEntry: {
         duration: 0,
@@ -825,6 +982,16 @@ export default {
     filteredSprints() {
       if (!this.filters.projectId) return []
       return this.allSprints.filter(s => s.projectId === this.filters.projectId)
+    },
+    selectedNewTicketProject() {
+      if (!this.newTicket.projectId) return null
+      return this.projects.find(p => Number(p.id) === Number(this.newTicket.projectId)) || null
+    },
+    selectedProjectGithubRef() {
+      return this.resolveProjectGithubRef(this.selectedNewTicketProject)
+    },
+    selectedProjectGitlabRef() {
+      return this.resolveProjectGitlabRef(this.selectedNewTicketProject)
     },
     hasActiveFilters() {
       return this.filters.projectId !== null || 
@@ -952,12 +1119,209 @@ export default {
           tickets: Array.from(project.tickets.values()).sort((a, b) => b.totalMinutes - a.totalMinutes)
         }))
         .sort((a, b) => b.totalMinutes - a.totalMinutes)
+    },
+    recentActivitiesByDays() {
+      if (!this.activityDaysFilter) return this.recentEntityActivities
+      const cutoff = new Date()
+      cutoff.setDate(cutoff.getDate() - this.activityDaysFilter)
+      cutoff.setHours(0, 0, 0, 0)
+      return this.recentEntityActivities.filter(item => item.date && new Date(item.date) >= cutoff)
+    },
+    recentActivitySummary() {
+      const list = this.recentActivitiesByDays
+      return {
+        created: list.filter(i => i.type === 'created').length,
+        updated: list.filter(i => i.type === 'updated').length,
+        notes: list.filter(i => i.type === 'notes').length,
+        recettes: list.filter(i => i.type === 'recettes').length,
+        messages: list.filter(i => i.type === 'messages').length
+      }
+    },
+    filteredRecentEntityActivities() {
+      let list = this.recentActivitiesByDays
+      if (this.activityTypeFilter !== 'all') {
+        list = list.filter(item => item.type === this.activityTypeFilter)
+      }
+      const q = this.activitySearchQuery.trim().toLowerCase()
+      if (!q) return list
+      return list.filter(item => {
+        const inTitle = (item.title || '').toLowerCase().includes(q)
+        const inProject = (item.projectName || '').toLowerCase().includes(q)
+        const inDesc = this.stripHtml(item.description || '').toLowerCase().includes(q)
+        return inTitle || inProject || inDesc
+      })
     }
   },
   async mounted() {
     await this.loadData()
   },
   methods: {
+    resolveProjectGithubRef(project) {
+      if (!project) return null
+      const owner = String(project.githubRepoOwner || '').trim()
+      const repo = String(project.githubRepoName || '').trim()
+      if (owner && repo) return { owner, repo }
+
+      const repoUrl = String(project.githubRepoUrl || '').trim()
+      if (!repoUrl) return null
+      try {
+        const ref = parseGithubRepoRef(repoUrl)
+        return { owner: ref.owner, repo: ref.repo }
+      } catch {
+        return null
+      }
+    },
+    resolveProjectGitlabRef(project) {
+      if (!project) return null
+      const projectPath = String(project.gitlabProjectPath || '').trim()
+      const projectId = String(project.gitlabProjectId || '').trim()
+      if (projectPath) {
+        const repoUrl = String(project.gitlabRepoUrl || '').trim()
+        if (repoUrl) {
+          try {
+            const parsed = parseGitlabRepoRef(repoUrl)
+            return {
+              host: parsed.host,
+              projectPath,
+              projectId: projectId || undefined
+            }
+          } catch {
+            // fallback ci-dessous
+          }
+        }
+        return { projectPath, projectId: projectId || undefined }
+      }
+
+      const repoUrl = String(project.gitlabRepoUrl || '').trim()
+      if (!repoUrl) return null
+      try {
+        return parseGitlabRepoRef(repoUrl)
+      } catch {
+        return null
+      }
+    },
+    onNewTicketProjectChange() {
+      this.newTicketGithub.baseSha = ''
+      this.githubTicketCommits = []
+      this.githubTicketCommitsError = ''
+      this.githubTicketBranchInput = this.selectedNewTicketProject?.githubDefaultBranch || ''
+      this.githubTicketBranches = []
+      this.newTicketGitlab.baseSha = ''
+      this.gitlabTicketCommits = []
+      this.gitlabTicketCommitsError = ''
+      this.gitlabTicketBranchInput = this.selectedNewTicketProject?.gitlabDefaultBranch || ''
+      this.gitlabTicketBranches = []
+      this.loadGithubBranchesForNewTicket()
+      this.loadGitlabBranchesForNewTicket()
+      this.loadGithubCommitsForNewTicket()
+      this.loadGitlabCommitsForNewTicket()
+    },
+    async loadGithubBranchesForNewTicket() {
+      const ref = this.selectedProjectGithubRef
+      if (!ref) {
+        this.githubTicketBranches = []
+        return
+      }
+      if (this.githubTicketBranchesLoading) return
+
+      this.githubTicketBranchesLoading = true
+      try {
+        const token = String(this.githubTicketTokenInput || '').trim() || undefined
+        const branches = await listGithubBranches(ref, token, 100, 1)
+        this.githubTicketBranches = Array.from(new Set((branches || []).map(branch => branch.name).filter(Boolean)))
+      } catch {
+        this.githubTicketBranches = []
+      } finally {
+        this.githubTicketBranchesLoading = false
+      }
+    },
+    async loadGitlabBranchesForNewTicket() {
+      const ref = this.selectedProjectGitlabRef
+      if (!ref) {
+        this.gitlabTicketBranches = []
+        return
+      }
+      if (this.gitlabTicketBranchesLoading) return
+
+      this.gitlabTicketBranchesLoading = true
+      try {
+        const token = String(this.gitlabTicketTokenInput || '').trim() || undefined
+        const branches = await listGitlabBranches(ref, token, 100, 1)
+        this.gitlabTicketBranches = Array.from(new Set((branches || []).map(branch => branch.name).filter(Boolean)))
+      } catch {
+        this.gitlabTicketBranches = []
+      } finally {
+        this.gitlabTicketBranchesLoading = false
+      }
+    },
+    async loadGithubCommitsForNewTicket() {
+      const ref = this.selectedProjectGithubRef
+      if (!ref) {
+        this.githubTicketCommits = []
+        this.githubTicketCommitsError = ''
+        return
+      }
+
+      this.githubTicketCommitsLoading = true
+      this.githubTicketCommitsError = ''
+      try {
+        await this.loadGithubBranchesForNewTicket()
+        const branch = String(this.githubTicketBranchInput || this.selectedNewTicketProject?.githubDefaultBranch || '').trim() || undefined
+        const commits = await listGithubCommits(
+          ref,
+          this.githubTicketTokenInput || undefined,
+          12,
+          1,
+          branch
+        )
+        this.githubTicketCommits = commits
+        this.newTicketGithub.baseSha = commits[0]?.sha || ''
+      } catch (error) {
+        this.githubTicketCommits = []
+        this.githubTicketCommitsError = error?.message || 'Impossible de charger les commits GitHub'
+      } finally {
+        this.githubTicketCommitsLoading = false
+      }
+    },
+    async loadGitlabCommitsForNewTicket() {
+      const ref = this.selectedProjectGitlabRef
+      if (!ref) {
+        this.gitlabTicketCommits = []
+        this.gitlabTicketCommitsError = ''
+        return
+      }
+
+      this.gitlabTicketCommitsLoading = true
+      this.gitlabTicketCommitsError = ''
+      try {
+        await this.loadGitlabBranchesForNewTicket()
+        const branch = String(this.gitlabTicketBranchInput || this.selectedNewTicketProject?.gitlabDefaultBranch || '').trim() || undefined
+        const commits = await listGitlabCommits(
+          ref,
+          this.gitlabTicketTokenInput || undefined,
+          12,
+          1,
+          branch
+        )
+        this.gitlabTicketCommits = commits
+        this.newTicketGitlab.baseSha = commits[0]?.sha || ''
+      } catch (error) {
+        this.gitlabTicketCommits = []
+        this.gitlabTicketCommitsError = error?.message || 'Impossible de charger les commits GitLab'
+      } finally {
+        this.gitlabTicketCommitsLoading = false
+      }
+    },
+    buildTicketBranchName(ticketId, ticketTitle) {
+      const base = String(ticketTitle || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '')
+        .slice(0, 40) || 'ticket'
+      return `ticket/${ticketId}-${base}`
+    },
     isCompletedItemStatus(status) {
       if (!status) return false
       const normalized = String(status).toLowerCase()
@@ -969,6 +1333,9 @@ export default {
         normalized.includes('résolu') ||
         normalized.includes('resolu')
       )
+    },
+    scrollToTop() {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
     },
     async loadData() {
       this.currentUserId = auth.getSession()?.userId || null
@@ -983,6 +1350,7 @@ export default {
       this.allTimeEntries = await db.getAllTimeEntries()
       this.allLocalTasks = await db.getAllLocalTasks()
       this.allOdooTasks = await db.getAllOdooTasks()
+      this.allRecettes = await db.getAllRecettes()
       
       // Charger les todos prévus pour aujourd'hui (plannedDate)
       const today = new Date().toISOString().split('T')[0]
@@ -996,6 +1364,14 @@ export default {
       let filteredTickets = [...this.allTickets]
       let filteredTimeEntries = [...this.allTimeEntries]
       let filteredSprints = [...this.allSprints]
+      let filteredLocalTasks = [...this.allLocalTasks]
+      let filteredRecettes = [...this.allRecettes]
+
+      // Flux activités (décorrélé du filtre de période du tableau)
+      // Il reste impacté par les filtres projet/sprint/année appliqués ci-dessous.
+      let activityTickets = []
+      let activityLocalTasks = []
+      let activityRecettes = []
 
       if (this.myTimeEntriesOnly) {
         filteredTimeEntries = filteredTimeEntries.filter(entry => (entry.userId || null) === (this.currentUserId || null))
@@ -1005,6 +1381,8 @@ export default {
       if (this.filters.projectId) {
         filteredTickets = filteredTickets.filter(t => t.projectId === this.filters.projectId)
         filteredSprints = filteredSprints.filter(s => s.projectId === this.filters.projectId)
+        filteredLocalTasks = filteredLocalTasks.filter(t => t.projectId === this.filters.projectId)
+        filteredRecettes = filteredRecettes.filter(r => r.projectId === this.filters.projectId)
         filteredTimeEntries = filteredTimeEntries.filter(te => {
           const ticket = this.allTickets.find(t => t.id === te.ticketId)
           return ticket && ticket.projectId === this.filters.projectId
@@ -1014,6 +1392,8 @@ export default {
       // Filtre par sprint
       if (this.filters.sprintId) {
         filteredTickets = filteredTickets.filter(t => t.sprintId === this.filters.sprintId)
+        filteredLocalTasks = filteredLocalTasks.filter(t => t.sprintId === this.filters.sprintId)
+        filteredRecettes = filteredRecettes.filter(r => r.sprintId === this.filters.sprintId)
       }
 
       // Filtre par année
@@ -1022,6 +1402,16 @@ export default {
           if (!t.createdAt) return false
           return new Date(t.createdAt).getFullYear() === this.filters.year
         })
+        filteredLocalTasks = filteredLocalTasks.filter(t => {
+          const referenceDate = t.updatedAt || t.createdAt
+          if (!referenceDate) return false
+          return new Date(referenceDate).getFullYear() === this.filters.year
+        })
+        filteredRecettes = filteredRecettes.filter(r => {
+          const referenceDate = r.updatedAt || r.createdAt
+          if (!referenceDate) return false
+          return new Date(referenceDate).getFullYear() === this.filters.year
+        })
         filteredTimeEntries = filteredTimeEntries.filter(te => {
           if (!te.date) return false
           return new Date(te.date).getFullYear() === this.filters.year
@@ -1029,6 +1419,10 @@ export default {
       }
 
       // Filtre par période
+      activityTickets = [...filteredTickets]
+      activityLocalTasks = [...filteredLocalTasks]
+      activityRecettes = [...filteredRecettes]
+
       if (this.filters.period !== 'all') {
         const now = new Date()
         let startDate
@@ -1053,6 +1447,16 @@ export default {
             if (!t.createdAt) return false
             return new Date(t.createdAt) >= startDate
           })
+          filteredLocalTasks = filteredLocalTasks.filter(t => {
+            const referenceDate = t.updatedAt || t.createdAt
+            if (!referenceDate) return false
+            return new Date(referenceDate) >= startDate
+          })
+          filteredRecettes = filteredRecettes.filter(r => {
+            const referenceDate = r.updatedAt || r.createdAt
+            if (!referenceDate) return false
+            return new Date(referenceDate) >= startDate
+          })
           filteredTimeEntries = filteredTimeEntries.filter(te => {
             if (!te.date) return false
             return new Date(te.date) >= startDate
@@ -1063,13 +1467,14 @@ export default {
       this.tickets = filteredTickets
       this.timeEntries = filteredTimeEntries
       this.sprints = filteredSprints
+      this.buildRecentActivityFeed(activityTickets, activityLocalTasks, activityRecettes)
       this.calculateStats()
     },
     resetFilters() {
       this.filters = {
         projectId: null,
         year: null,
-        period: 'all',
+        period: 'thisMonth',
         sprintId: null
       }
       this.myTimeEntriesOnly = false
@@ -1078,6 +1483,39 @@ export default {
     toggleMyTimeEntries() {
       this.myTimeEntriesOnly = !this.myTimeEntriesOnly
       this.applyFilters()
+    },
+    stripHtml(html) {
+      if (!html) return ''
+      return String(html).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+    },
+    truncateHtml(html, maxChars) {
+      if (!html) return ''
+      const text = this.stripHtml(html)
+      if (text.length <= maxChars) {
+        // Pas de troncature nécessaire, on retourne le HTML directement
+        return html
+      }
+      // On tronque sur le texte brut
+      const truncated = text.slice(0, maxChars)
+      return `<span>${truncated.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</span><span style="color:#bbb;"> … <em>[contenu tronqué]</em></span>`
+    },
+    setActivityTypeFilter(type) {
+      if (this.activityTypeFilter === type) {
+        this.activityTypeFilter = 'all'
+        return
+      }
+      this.activityTypeFilter = type
+    },
+    getActivityTypeLabel(type) {
+      const labels = {
+        all: 'Toutes les activités',
+        created: 'Créations',
+        updated: 'Modifications',
+        notes: 'Notes',
+        recettes: 'Recettes',
+        messages: 'Messages'
+      }
+      return labels[type] || type
     },
     startDashboardTimeEntryEdit(entry) {
       this.editingTimeEntryId = entry.id
@@ -1145,6 +1583,8 @@ export default {
         const createdTicketKey = await db.addTicket(ticketData)
 
         let odooSyncMessage = ''
+        let githubMessage = ''
+        let gitlabMessage = ''
         const selectedProject = this.projects.find(p => p.id === this.newTicket.projectId)
 
         if (selectedProject?.odooId && odooService.isConfigured()) {
@@ -1167,6 +1607,63 @@ export default {
             odooSyncMessage = ' (⚠️ non synchronisé Odoo)'
           }
         }
+
+        const localTicketId = Number(createdTicketKey)
+        const githubRef = this.resolveProjectGithubRef(selectedProject)
+        if (this.newTicketGithub.createBranch && githubRef) {
+          try {
+            const token = String(this.githubTicketTokenInput || '').trim()
+            if (!token) {
+              throw new Error('Token GitHub requis pour créer la branche')
+            }
+
+            localStorage.setItem('github.connector.token', token)
+
+            const branchName = String(this.newTicketGithub.branchName || '').trim() || this.buildTicketBranchName(localTicketId, this.newTicket.title)
+            const branchUrl = await createGithubBranch(
+              githubRef,
+              branchName,
+              token,
+              this.newTicketGithub.baseSha || undefined,
+              selectedProject.githubDefaultBranch || undefined
+            )
+            githubMessage = ` + branche créée (${branchName})`
+            if (confirm(`✅ Branche GitHub créée. Ouvrir la branche ?\n${branchName}`)) {
+              window.open(branchUrl, '_blank', 'noopener')
+            }
+          } catch (githubError) {
+            console.error('Erreur création branche GitHub:', githubError)
+            githubMessage = ` (⚠️ branche GitHub non créée: ${githubError?.message || 'erreur'})`
+          }
+        }
+
+        const gitlabRef = this.resolveProjectGitlabRef(selectedProject)
+        if (this.newTicketGitlab.createBranch && gitlabRef) {
+          try {
+            const token = String(this.gitlabTicketTokenInput || '').trim()
+            if (!token) {
+              throw new Error('Token GitLab requis pour créer la branche')
+            }
+
+            localStorage.setItem('gitlab.connector.token', token)
+
+            const branchName = String(this.newTicketGitlab.branchName || '').trim() || this.buildTicketBranchName(localTicketId, this.newTicket.title)
+            const branchUrl = await createGitlabBranch(
+              gitlabRef,
+              branchName,
+              token,
+              this.newTicketGitlab.baseSha || undefined,
+              selectedProject.gitlabDefaultBranch || undefined
+            )
+            gitlabMessage = ` + branche GitLab créée (${branchName})`
+            if (confirm(`✅ Branche GitLab créée. Ouvrir la branche ?\n${branchName}`)) {
+              window.open(branchUrl, '_blank', 'noopener')
+            }
+          } catch (gitlabError) {
+            console.error('Erreur création branche GitLab:', gitlabError)
+            gitlabMessage = ` (⚠️ branche GitLab non créée: ${gitlabError?.message || 'erreur'})`
+          }
+        }
         
         // Réinitialiser le formulaire
         this.newTicket = {
@@ -1177,10 +1674,24 @@ export default {
           status: 'À faire',
           assignedUserId: this.currentUserId
         }
+        this.newTicketGithub = {
+          createBranch: true,
+          branchName: '',
+          baseSha: ''
+        }
+        this.githubTicketCommits = []
+        this.githubTicketCommitsError = ''
+        this.newTicketGitlab = {
+          createBranch: true,
+          branchName: '',
+          baseSha: ''
+        }
+        this.gitlabTicketCommits = []
+        this.gitlabTicketCommitsError = ''
         
         this.showTicketModal = false
         await this.loadData()
-        alert(`✅ Ticket créé avec succès !${odooSyncMessage}`)
+        alert(`✅ Ticket créé avec succès !${odooSyncMessage}${githubMessage}${gitlabMessage}`)
       } catch (error) {
         console.error('Erreur lors de la création du ticket:', error)
         alert('❌ Erreur lors de la création du ticket')
@@ -1278,8 +1789,182 @@ export default {
     getTicketTitle(ticketId) {
       return this.allTickets.find(t => t.id === ticketId)?.title || 'Ticket inconnu'
     },
+    buildRecentActivityFeed(filteredTickets, filteredLocalTasks, filteredRecettes) {
+      const activities = []
+
+      const addActivity = (item) => {
+        if (!item?.date) return
+        activities.push(item)
+      }
+
+      for (const ticket of filteredTickets) {
+        const ticketTitle = ticket.title || 'Ticket sans titre'
+        const projectName = this.getProjectNameById(ticket.projectId)
+
+        if (ticket.createdAt) {
+          addActivity({
+            key: `ticket-created-${ticket.id}-${ticket.createdAt}`,
+            icon: '🎫',
+            type: 'created',
+            typeLabel: 'Ticket créé',
+            date: ticket.createdAt,
+            title: ticketTitle,
+            description: ticket.description || '',
+            ticketId: ticket.id,
+            projectId: ticket.projectId,
+            projectName
+          })
+        }
+
+        if (ticket.updatedAt && ticket.updatedAt !== ticket.createdAt) {
+          addActivity({
+            key: `ticket-updated-${ticket.id}-${ticket.updatedAt}`,
+            icon: '✏️',
+            type: 'updated',
+            typeLabel: 'Ticket modifié',
+            date: ticket.updatedAt,
+            title: ticketTitle,
+            description: 'Mise à jour du ticket',
+            ticketId: ticket.id,
+            projectId: ticket.projectId,
+            projectName
+          })
+        }
+
+        for (const note of (ticket.notes || [])) {
+          const noteDate = note.updatedAt || note.createdAt
+          addActivity({
+            key: `ticket-note-${ticket.id}-${note.id}-${noteDate}`,
+            icon: '📝',
+            type: 'notes',
+            typeLabel: 'Note',
+            date: noteDate,
+            title: ticketTitle,
+            description: note.content || '',
+            ticketId: ticket.id,
+            projectId: ticket.projectId,
+            projectName
+          })
+        }
+
+        for (const entry of (ticket.recetteHistory || [])) {
+          addActivity({
+            key: `ticket-recette-${ticket.id}-${entry.id}-${entry.createdAt}`,
+            icon: '🧪',
+            type: 'recettes',
+            typeLabel: 'Recette',
+            date: entry.createdAt,
+            title: ticketTitle,
+            description: entry.comment || this.getRecetteStatusLabel(entry.status),
+            ticketId: ticket.id,
+            projectId: ticket.projectId,
+            projectName
+          })
+        }
+
+        for (const message of (ticket.emailHistory || [])) {
+          addActivity({
+            key: `ticket-message-${ticket.id}-${message.id}-${message.createdAt}`,
+            icon: '💬',
+            type: 'messages',
+            typeLabel: 'Message',
+            date: message.createdAt,
+            title: ticketTitle,
+            description: message.subject || message.parsedBody || message.body || '',
+            ticketId: ticket.id,
+            projectId: ticket.projectId,
+            projectName
+          })
+        }
+      }
+
+      for (const task of filteredLocalTasks) {
+        const taskTitle = task.title || 'Tâche locale sans titre'
+        const projectName = this.getProjectNameById(task.projectId)
+
+        if (task.createdAt) {
+          addActivity({
+            key: `task-created-${task.id}-${task.createdAt}`,
+            icon: '✅',
+            type: 'created',
+            typeLabel: 'Tâche créée',
+            date: task.createdAt,
+            title: taskTitle,
+            description: task.description || '',
+            localTaskId: task.id,
+            projectId: task.projectId,
+            projectName
+          })
+        }
+
+        if (task.updatedAt && task.updatedAt !== task.createdAt) {
+          addActivity({
+            key: `task-updated-${task.id}-${task.updatedAt}`,
+            icon: '✏️',
+            type: 'updated',
+            typeLabel: 'Tâche modifiée',
+            date: task.updatedAt,
+            title: taskTitle,
+            description: 'Mise à jour de la tâche',
+            localTaskId: task.id,
+            projectId: task.projectId,
+            projectName
+          })
+        }
+      }
+
+      for (const recette of filteredRecettes) {
+        const referenceDate = recette.updatedAt || recette.createdAt
+        addActivity({
+          key: `recette-${recette.id}-${referenceDate}`,
+          icon: '🧪',
+          type: 'recettes',
+          typeLabel: 'Recette',
+          date: referenceDate,
+          title: recette.name || 'Recette',
+          description: recette.description || '',
+          projectId: recette.projectId || null,
+          projectName: recette.projectId ? this.getProjectNameById(recette.projectId) : 'Projet inconnu'
+        })
+      }
+
+      const sorted = activities
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        .slice(0, 30)
+
+      this.recentEntityActivities = sorted
+    },
+    getRecetteStatusLabel(status) {
+      const labels = {
+        pending: 'À retester',
+        ready_for_test: 'Prêt à tester',
+        in_test: 'En test',
+        blocked: 'Bloqué',
+        validated: 'Validé',
+        rejected: 'Rejeté'
+      }
+      return labels[status] || 'Recette'
+    },
+    openActivityItem(item) {
+      if (item.ticketId) {
+        this.viewTicket(item.ticketId)
+        return
+      }
+
+      if (item.localTaskId) {
+        this.viewLocalTask(item.localTaskId)
+        return
+      }
+
+      if (item.projectId) {
+        this.viewProject(item.projectId)
+      }
+    },
     viewProject(projectId) {
       this.$router.push(`/projects/${projectId}`)
+    },
+    viewLocalTask(localTaskId) {
+      this.$router.push(`/local-tasks/${localTaskId}`)
     },
     getUserDisplayName(userId) {
       if (!userId) return 'Non assigné'
@@ -1583,6 +2268,41 @@ export default {
   margin-bottom: 2rem;
   gap: 2rem;
   flex-wrap: wrap;
+}
+
+.dashboard-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 2rem;
+  border-bottom: 2px solid #e2e8f0;
+  flex-wrap: wrap;
+}
+
+.dashboard-tab {
+  padding: 0.65rem 1.3rem;
+  border: none;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: #718096;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  margin-bottom: -2px;
+  border-radius: 8px 8px 0 0;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.dashboard-tab:hover {
+  background: #f7fafc;
+  color: #4a5568;
+}
+
+.dashboard-tab.active {
+  color: #667eea;
+  border-bottom-color: #667eea;
+  background: #f0f2ff;
+  font-weight: 600;
 }
 
 .dashboard h2 {
@@ -2156,11 +2876,171 @@ export default {
   gap: 1rem;
 }
 
+.activity-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 1rem;
+}
+
 .priority-card {
   text-align: center;
   padding: 1.5rem;
   border-radius: 8px;
   background: #f8f9fa;
+}
+
+.activity-filter-card {
+  border: 2px solid transparent;
+  cursor: pointer;
+  width: 100%;
+  transition: all 0.2s;
+}
+
+.activity-filter-card:hover {
+  transform: translateY(-2px);
+  border-color: #cbd5e0;
+}
+
+.activity-filter-card.active {
+  border-color: #667eea;
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.12) 0%, rgba(118, 75, 162, 0.12) 100%);
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.12);
+}
+
+.activity-filter-actions {
+  margin-top: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.activity-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  background: #f8fafc;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 0.4rem 0.75rem;
+  transition: border-color 0.2s;
+}
+
+.activity-search-bar:focus-within {
+  border-color: #667eea;
+  background: #fff;
+}
+
+.activity-search-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.activity-search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 0.95rem;
+  color: #2d3748;
+  min-width: 0;
+}
+
+.activity-search-input::placeholder {
+  color: #a0aec0;
+}
+
+.activity-search-clear {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #a0aec0;
+  font-size: 1rem;
+  padding: 0 0.2rem;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.activity-search-clear:hover {
+  color: #e53e3e;
+}
+
+.activity-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.activity-section-header h3 {
+  margin: 0;
+  font-size: 1.2rem;
+  color: #333;
+}
+
+.activity-days-selector {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.days-btn {
+  padding: 0.35rem 0.8rem;
+  border: 2px solid #e2e8f0;
+  border-radius: 20px;
+  background: white;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #4a5568;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+
+.days-btn:hover {
+  border-color: #a3b0f5;
+  color: #667eea;
+}
+
+.days-btn.active {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-color: #667eea;
+  color: white;
+  box-shadow: 0 2px 6px rgba(102, 126, 234, 0.35);
+}
+
+.activity-filter-label {
+  color: #4a5568;
+  font-size: 0.9rem;
+}
+
+.activity-description {
+  margin-top: 0.35rem;
+  color: #555;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+.activity-description :deep(p) { margin: 0.25rem 0; }
+.activity-description :deep(ul),
+.activity-description :deep(ol) { margin: 0.25rem 0; padding-left: 1.25rem; }
+.activity-description :deep(li) { margin: 0.15rem 0; }
+.activity-description :deep(strong) { color: #333; }
+.activity-description :deep(h1),
+.activity-description :deep(h2),
+.activity-description :deep(h3) { font-size: 0.95rem; margin: 0.25rem 0; }
+.activity-description :deep(pre),
+.activity-description :deep(code) {
+  background: #f1f3f5;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.82rem;
+  white-space: pre-wrap;
 }
 
 .priority-high { border-left: 4px solid #dc3545; }

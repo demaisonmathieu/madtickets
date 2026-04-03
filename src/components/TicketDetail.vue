@@ -508,14 +508,51 @@
         <div class="detail-section">
           <h3>📚 User stories</h3>
 
+          <div class="card" style="background: #f8f9fa; border: 1px solid #e0e0e0; margin-bottom: 1rem;">
+            <div class="form-group" style="margin-bottom:0;">
+              <label>Filtrer par phase de recette</label>
+              <select v-model="selectedStoryPhaseFilter">
+                <option value="all">Toutes les phases</option>
+                <option v-for="phase in availableStoryPhases" :key="`phase-filter-${phase}`" :value="phase">{{ phase }}</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="card" style="background: #f8f9fa; border: 1px solid #e0e0e0; margin-bottom: 1rem;">
+            <h4 style="margin-top:0; margin-bottom:0.75rem;">Dupliquer une phase de test</h4>
+            <div class="form-grid">
+              <div>
+                <label>Phase source</label>
+                <select v-model="phaseCloneForm.sourcePhase" @change="onCloneSourcePhaseChange">
+                  <option v-for="phase in availableStoryPhases" :key="`phase-source-${phase}`" :value="phase">{{ phase }}</option>
+                </select>
+              </div>
+              <div>
+                <label>Nouvelle phase</label>
+                <input v-model.trim="phaseCloneForm.targetPhase" placeholder="Ex: Phase 2" />
+              </div>
+            </div>
+            <div style="margin-top:0.6rem; display:flex; justify-content:flex-end;">
+              <button type="button" class="btn btn-secondary" @click="duplicateStoriesToNewPhase" :disabled="!phaseCloneForm.sourcePhase || !phaseCloneForm.targetPhase">📄 Créer la phase avec les mêmes user stories</button>
+            </div>
+          </div>
+
           <form @submit.prevent="addUserStory" class="card" style="background: #f8f9fa; border: 1px solid #e0e0e0; margin-bottom: 1rem;">
             <div class="form-group">
               <label>Titre *</label>
               <input v-model="userStoryForm.title" required placeholder="Ex: En tant qu'utilisateur, je veux..." />
             </div>
             <div class="form-group">
+              <label>Phase de recette *</label>
+              <input v-model="userStoryForm.phase" required placeholder="Ex: Phase 1 / UAT / Pré-recette" />
+            </div>
+            <div class="form-group">
               <label>Description</label>
               <textarea v-model="userStoryForm.description" rows="2" placeholder="Détails de la user story..."></textarea>
+            </div>
+            <div class="form-group">
+              <label>Commentaire de la user story</label>
+              <textarea v-model="userStoryForm.comment" rows="2" placeholder="Commentaire de contexte pour cette user story..."></textarea>
             </div>
             <div class="form-group">
               <label>Critères d'acceptation</label>
@@ -528,20 +565,57 @@
             Aucune user story sur ce ticket
           </div>
 
-          <div v-for="story in userStories" :key="story.id" class="note-card">
+          <div v-else-if="filteredUserStories.length === 0" style="text-align: center; color: #999; padding: 1rem;">
+            Aucune user story dans la phase sélectionnée
+          </div>
+
+          <div v-for="story in filteredUserStories" :key="story.id" class="note-card">
             <div style="display: flex; justify-content: space-between; gap: 0.75rem; align-items: flex-start; margin-bottom: 0.5rem;">
-              <strong>{{ story.title }}</strong>
+              <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                <strong>{{ story.title }}</strong>
+                <small style="color:#666;">
+                  🧪 Phase: <strong>{{ getStoryPhase(story) }}</strong>
+                </small>
+              </div>
               <div style="display: flex; gap: 0.5rem; align-items: center;">
                 <select :value="story.status || 'todo'" @change="updateUserStoryStatus(story.id, $event.target.value)">
                   <option value="todo">À faire</option>
                   <option value="in-progress">En cours</option>
                   <option value="done">Terminée</option>
                 </select>
+                <select :value="getStoryPhase(story)" @change="updateUserStoryPhase(story.id, $event.target.value)">
+                  <option v-for="phase in availableStoryPhases" :key="`phase-story-${story.id}-${phase}`" :value="phase">{{ phase }}</option>
+                </select>
                 <button type="button" class="btn btn-danger btn-sm" @click="deleteUserStoryConfirm(story.id)">🗑️</button>
               </div>
             </div>
 
             <div v-if="story.description" class="note-content" style="margin-bottom: 0.5rem;">{{ story.description }}</div>
+
+            <div class="form-group" style="margin-bottom:0.6rem;">
+              <label style="font-size:0.85rem;color:#666;">Commentaire de recette de la user story</label>
+              <textarea
+                rows="2"
+                :value="getStoryDraftComment(story)"
+                @input="onUserStoryCommentInput(story.id, $event.target.value)"
+                placeholder="Ex: KO sur Safari, retest à faire sur Phase 2..."
+              ></textarea>
+              <div style="display:flex; justify-content:flex-end; margin-top:0.35rem;">
+                <button type="button" class="btn btn-secondary btn-sm" @click="saveUserStoryComment(story.id)">💾 Enregistrer le commentaire</button>
+              </div>
+            </div>
+
+            <div v-if="getStorySavedComment(story)" style="margin-bottom:0.6rem; padding:0.55rem 0.65rem; border:1px solid #dbeafe; border-radius:6px; background:#f8fbff; color:#1e3a8a; white-space:pre-wrap;">
+              <strong>💬 Commentaire enregistré :</strong>
+              <div style="margin-top:0.25rem;">{{ getStorySavedComment(story) }}</div>
+            </div>
+
+            <small style="display:block; color:#777; margin-bottom:0.45rem;">
+              Recette/story mise à jour par {{ getUserDisplayName(story.updatedByUserId || story.createdByUserId) }}
+              <span v-if="story.updatedAt">le {{ formatDateTime(story.updatedAt) }}</span>
+              <span v-else-if="story.createdAt">le {{ formatDateTime(story.createdAt) }}</span>
+            </small>
+
             <div class="note-content" style="margin-bottom: 0.5rem;">
               <strong>Critères d'acceptation</strong>
               <div v-if="getStoryCriteria(story).length === 0" style="color:#999; margin-top: 0.25rem;">Aucun critère</div>
@@ -681,6 +755,34 @@
                 {{ clientEmailError }}
               </div>
             </form>
+          </div>
+
+          <div class="card" style="margin-bottom: 1.5rem; background: #f8f9fa; border: 1px solid #e0e0e0;">
+            <h4>🕓 Historique des emails</h4>
+            <div v-if="!ticket?.emailHistory || ticket.emailHistory.length === 0" style="color:#999;">
+              Aucun email enregistré pour ce ticket.
+            </div>
+            <div v-else>
+              <div v-for="entry in sortedEmailHistory" :key="entry.id" class="note-card" style="background:#fff;">
+                <div class="note-meta" style="border-top:none; padding-top:0; margin-bottom:0.45rem;">
+                  <div>
+                    <strong>{{ entry.direction === 'incoming' ? '📥 Email reçu' : '📤 Email envoyé' }}</strong>
+                    <small>
+                      {{ formatDateTime(entry.createdAt) }}
+                      <span v-if="entry.provider"> • via {{ entry.provider }}</span>
+                      <span v-if="entry.status"> • {{ entry.status }}</span>
+                    </small>
+                  </div>
+                </div>
+                <div style="display:grid; gap:0.25rem; color:#555; margin-bottom:0.4rem;">
+                  <div v-if="entry.from"><strong>De :</strong> {{ entry.from }}</div>
+                  <div v-if="entry.to?.length"><strong>À :</strong> {{ entry.to.join(', ') }}</div>
+                  <div v-if="entry.cc?.length"><strong>CC :</strong> {{ entry.cc.join(', ') }}</div>
+                  <div><strong>Sujet :</strong> {{ entry.subject }}</div>
+                </div>
+                <div v-if="entry.body || entry.parsedBody" class="note-content" style="white-space: pre-wrap; margin-bottom:0;">{{ entry.parsedBody || entry.body }}</div>
+              </div>
+            </div>
           </div>
 
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
@@ -838,6 +940,8 @@ import { auth } from '../services/auth'
 import { apiFetch } from '../services/api'
 import * as XLSX from 'xlsx'
 
+const MAIL_CONFIG_KEY = 'app-mail-config'
+
 export default {
   name: 'TicketDetail',
   components: {
@@ -931,8 +1035,16 @@ export default {
       userStoryForm: {
         title: '',
         description: '',
-        acceptanceCriteria: ''
+        acceptanceCriteria: '',
+        phase: 'Phase 1',
+        comment: ''
       },
+      selectedStoryPhaseFilter: 'all',
+      phaseCloneForm: {
+        sourcePhase: '',
+        targetPhase: ''
+      },
+      userStoryDraftComments: {},
       newCriterionByStoryId: {},
       todos: [],
       sprints: []
@@ -951,6 +1063,26 @@ export default {
       return (this.ticket?.userStories || []).sort((a, b) =>
         new Date(b.createdAt) - new Date(a.createdAt)
       )
+    },
+    availableStoryPhases() {
+      const phases = new Set()
+      this.userStories.forEach(story => {
+        const phase = this.normalizeStoryPhase(story?.recettePhase || story?.phase || '')
+        if (phase) phases.add(phase)
+      })
+
+      if (phases.size === 0) {
+        phases.add('Phase 1')
+      }
+
+      return Array.from(phases)
+    },
+    filteredUserStories() {
+      if (this.selectedStoryPhaseFilter === 'all') return this.userStories
+      return this.userStories.filter(story => {
+        const phase = this.normalizeStoryPhase(story?.recettePhase || story?.phase || '')
+        return phase === this.selectedStoryPhaseFilter
+      })
     },
     recetteCoverage() {
       const allCriteria = this.userStories.flatMap(story => this.getStoryCriteria(story))
@@ -984,6 +1116,9 @@ export default {
       return [...this.timeEntries].sort((a, b) => 
         new Date(b.date) - new Date(a.date)
       )
+    },
+    sortedEmailHistory() {
+      return [...(this.ticket?.emailHistory || [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     },
     isTimeEntryValid() {
       return (this.newTimeEntry.hours > 0 || this.newTimeEntry.minutes > 0) && this.newTimeEntry.date
@@ -1056,6 +1191,8 @@ export default {
           status: this.ticket.recetteStatus || 'pending',
           comment: this.ticket.recetteComment || ''
         }
+        this.syncUserStoryDraftComments()
+        this.initPhaseCloneForm()
 
         if (!this.emailForm.subject) {
           this.emailForm.subject = `[Ticket #${this.ticket.id}] ${this.ticket.title}`
@@ -1070,6 +1207,12 @@ export default {
             `${this.project?.preprodUrl ? `Préproduction: ${this.project.preprodUrl}\n` : ''}` +
             `${this.project?.prodUrl ? `Production: ${this.project.prodUrl}\n` : ''}` +
             `\nMerci de votre retour.\n\nCordialement,`
+        }
+      } else {
+        this.userStoryDraftComments = {}
+        this.phaseCloneForm = {
+          sourcePhase: '',
+          targetPhase: ''
         }
       }
     },
@@ -1283,6 +1426,16 @@ export default {
     isValidEmail(email) {
       return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim())
     },
+    getSavedMailConfig() {
+      try {
+        const raw = localStorage.getItem(MAIL_CONFIG_KEY)
+        if (!raw) return null
+        const parsed = JSON.parse(raw)
+        return parsed?.enabled ? parsed : null
+      } catch {
+        return null
+      }
+    },
     openMailClientDraft() {
       const toList = this.parseEmailList(this.emailForm.to)
       if (toList.length === 0) {
@@ -1327,18 +1480,40 @@ export default {
 
       this.sendingClientEmail = true
       try {
-        await apiFetch('/email/send', {
+        const sendResult = await apiFetch('/email/send', {
           method: 'POST',
           body: JSON.stringify({
             to: toList,
             cc: ccList,
             subject: this.emailForm.subject,
             body: this.emailForm.body,
+            config: this.getSavedMailConfig(),
             ticketId: this.ticket?.id || null,
             ticketTitle: this.ticket?.title || '',
             projectName: this.project?.name || ''
           })
         })
+
+        await db.updateTicket(this.ticket.id, {
+          emailHistory: [
+            {
+              id: Date.now(),
+              direction: 'outgoing',
+              provider: sendResult?.provider || this.getSavedMailConfig()?.provider || 'smtp',
+              from: this.getSavedMailConfig()?.from || this.project?.clientEmail || '',
+              to: toList,
+              cc: ccList,
+              subject: this.emailForm.subject,
+              body: this.emailForm.body,
+              messageId: sendResult?.messageId || null,
+              status: 'sent',
+              createdAt: new Date().toISOString()
+            },
+            ...(this.ticket?.emailHistory || [])
+          ]
+        })
+
+        await this.loadTicket()
 
         this.clientEmailStatus = '✅ Email envoyé au client'
       } catch (error) {
@@ -1463,8 +1638,12 @@ export default {
       const storiesRows = this.userStories.map(story => ({
         'ID': story.id || '',
         'Titre': story.title || '',
+        'Phase recette': this.getStoryPhase(story),
         'Description': this.extractText(story.description || ''),
+        'Commentaire': story.comment || '',
         'Statut': story.status || 'todo',
+        'Créée par': story.createdByUserId ? this.getUserDisplayName(story.createdByUserId) : '',
+        'Dernière mise à jour par': story.updatedByUserId ? this.getUserDisplayName(story.updatedByUserId) : '',
         'Créée le': story.createdAt ? this.formatDateTime(story.createdAt) : '',
         'Critères total': this.getStoryCriteria(story).length,
         'Critères OK': this.getStoryCriteria(story).filter(c => this.getCriterionResult(c) === 'ok').length
@@ -1478,7 +1657,7 @@ export default {
       const historySheet = XLSX.utils.json_to_sheet(historyRows.length ? historyRows : [{ Date: '', Statut: '', Commentaire: '', 'Couverture': '', 'Couverture %': '', Auteur: '' }])
 
       summarySheet['!cols'] = [{ wch: 24 }, { wch: 90 }]
-      storiesSheet['!cols'] = [{ wch: 10 }, { wch: 40 }, { wch: 60 }, { wch: 18 }, { wch: 22 }, { wch: 14 }, { wch: 16 }]
+      storiesSheet['!cols'] = [{ wch: 10 }, { wch: 35 }, { wch: 20 }, { wch: 48 }, { wch: 40 }, { wch: 16 }, { wch: 24 }, { wch: 28 }, { wch: 22 }, { wch: 14 }, { wch: 16 }]
       criteriaSheet['!cols'] = [{ wch: 14 }, { wch: 36 }, { wch: 16 }, { wch: 14 }, { wch: 60 }, { wch: 10 }, { wch: 22 }, { wch: 24 }]
       historySheet['!cols'] = [{ wch: 22 }, { wch: 22 }, { wch: 60 }, { wch: 14 }, { wch: 14 }, { wch: 24 }]
 
@@ -1496,25 +1675,46 @@ export default {
     },
     async shareRecette() {
       try {
-        const project = this.project
-        if (!project) {
-          alert('Erreur : projet non trouvé')
+        if (!this.ticket?.id || !this.project?.id) {
+          alert('Erreur : ticket ou projet non trouvé')
           return
         }
 
-        // Générer un token si nécessaire
-        let token = project.recetteShareToken
-        if (!token) {
-          token = this.generateUUID()
-          project.recetteShareToken = token
-          await db.updateProject(project.id, { recetteShareToken: token })
+        const allRecettes = await db.getAllRecettes()
+
+        let recette = null
+        if (this.ticket.recetteId) {
+          recette = allRecettes.find(item => Number(item.id) === Number(this.ticket.recetteId)) || null
         }
 
-        // Créer le lien de partage
-        const origin = window.location.origin
-        const shareUrl = `${origin}/recette-share/${token}`
+        if (!recette) {
+          const createdId = await db.addRecette({
+            name: `Recette ${this.ticket.title}`,
+            description: this.ticket.description || '',
+            projectId: this.ticket.projectId,
+            sprintId: this.ticket.sprintId || null,
+            preprodUrl: this.project?.preprodUrl || '',
+            prodUrl: this.project?.prodUrl || '',
+            testAccounts: this.project?.testAccounts || [],
+            shareToken: this.generateUUID(),
+            createdByUserId: this.currentUserId || null
+          })
 
-        // Copier dans le presse-papiers
+          const createdRecetteId = Number(createdId)
+          recette = await db.getRecette(createdRecetteId)
+          await db.updateTicket(this.ticket.id, { recetteId: createdRecetteId })
+          this.ticket.recetteId = createdRecetteId
+        }
+
+        if (!recette?.shareToken) {
+          const token = this.generateUUID()
+          await db.updateRecette(recette.id, { shareToken: token })
+          recette.shareToken = token
+        }
+
+        const origin = window.location.origin
+        const shareUrl = `${origin}/recette-share/${recette.shareToken}`
+
         await navigator.clipboard.writeText(shareUrl)
         alert('✅ Lien de partage copié dans le presse-papiers !\n\n' + shareUrl)
       } catch (err) {
@@ -1640,6 +1840,144 @@ export default {
         alert(`❌ ${error.message || 'Erreur lors de la suppression'}`)
       }
     },
+    normalizeStoryPhase(value) {
+      const normalized = String(value || '').trim()
+      return normalized || 'Phase 1'
+    },
+    suggestNextPhaseName(sourcePhase) {
+      const normalized = this.normalizeStoryPhase(sourcePhase)
+      const match = normalized.match(/^phase\s+(\d+)$/i)
+      if (match) {
+        const nextNumber = Number(match[1]) + 1
+        return `Phase ${nextNumber}`
+      }
+      return `${normalized} (copie)`
+    },
+    initPhaseCloneForm() {
+      const phases = this.availableStoryPhases
+      const preferredSource = this.selectedStoryPhaseFilter !== 'all'
+        ? this.selectedStoryPhaseFilter
+        : phases[0]
+
+      const sourcePhase = this.normalizeStoryPhase(preferredSource)
+      this.phaseCloneForm = {
+        sourcePhase,
+        targetPhase: this.suggestNextPhaseName(sourcePhase)
+      }
+    },
+    onCloneSourcePhaseChange() {
+      const source = this.normalizeStoryPhase(this.phaseCloneForm.sourcePhase)
+      if (!this.phaseCloneForm.targetPhase || this.phaseCloneForm.targetPhase === this.phaseCloneForm.sourcePhase) {
+        this.phaseCloneForm.targetPhase = this.suggestNextPhaseName(source)
+      }
+    },
+    async duplicateStoriesToNewPhase() {
+      if (!this.ticket?.id) return
+
+      const sourcePhase = this.normalizeStoryPhase(this.phaseCloneForm.sourcePhase)
+      const targetPhase = this.normalizeStoryPhase(this.phaseCloneForm.targetPhase)
+
+      if (!sourcePhase || !targetPhase) {
+        alert('Merci de renseigner la phase source et la nouvelle phase.')
+        return
+      }
+
+      if (sourcePhase === targetPhase) {
+        alert('La nouvelle phase doit être différente de la phase source.')
+        return
+      }
+
+      const sourceStories = (this.ticket.userStories || []).filter(story => this.getStoryPhase(story) === sourcePhase)
+      if (sourceStories.length === 0) {
+        alert('Aucune user story trouvée pour la phase source.')
+        return
+      }
+
+      const now = Date.now()
+      const clonedStories = sourceStories.map((story, index) => {
+        const criteria = this.getStoryCriteria(story).map((criterion, cIndex) => ({
+          id: now + (index * 100) + cIndex + 1,
+          text: criterion.text,
+          result: null,
+          checked: false,
+          checkedAt: null,
+          checkedByUserId: null,
+          attachments: []
+        }))
+
+        return {
+          id: now + index + 1,
+          title: story.title,
+          recettePhase: targetPhase,
+          description: story.description || '',
+          comment: '',
+          acceptanceCriteria: story.acceptanceCriteria || '',
+          acceptanceCriteriaItems: criteria,
+          status: 'todo',
+          createdByUserId: this.currentUserId || null,
+          updatedByUserId: this.currentUserId || null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          clonedFromStoryId: story.id,
+          clonedFromPhase: sourcePhase
+        }
+      })
+
+      const nextStories = [...(this.ticket.userStories || []), ...clonedStories]
+      await db.updateTicket(this.ticket.id, { userStories: nextStories })
+      this.selectedStoryPhaseFilter = targetPhase
+      this.phaseCloneForm = {
+        sourcePhase: targetPhase,
+        targetPhase: this.suggestNextPhaseName(targetPhase)
+      }
+      this.userStoryForm.phase = targetPhase
+      await this.loadTicket()
+      alert(`✅ ${clonedStories.length} user stor${clonedStories.length > 1 ? 'ies' : 'y'} copiée(s) vers ${targetPhase}`)
+    },
+    getStoryPhase(story) {
+      return this.normalizeStoryPhase(story?.recettePhase || story?.phase || '')
+    },
+    syncUserStoryDraftComments() {
+      const draft = {}
+      ;(this.ticket?.userStories || []).forEach(story => {
+        draft[story.id] = story?.comment || ''
+      })
+      this.userStoryDraftComments = draft
+    },
+    getStoryDraftComment(story) {
+      if (Object.prototype.hasOwnProperty.call(this.userStoryDraftComments, story.id)) {
+        return this.userStoryDraftComments[story.id]
+      }
+      return this.getStorySavedComment(story)
+    },
+    getStorySavedComment(story) {
+      return String(story?.comment || story?.commentaire || story?.recetteComment || '').trim()
+    },
+    onUserStoryCommentInput(storyId, value) {
+      this.userStoryDraftComments = {
+        ...this.userStoryDraftComments,
+        [storyId]: value
+      }
+    },
+    async saveUserStoryComment(storyId) {
+      if (!this.ticket?.id) return
+
+      const nextComment = String(this.userStoryDraftComments[storyId] || '')
+      const stories = (this.ticket.userStories || []).map(story => {
+        if (story.id !== storyId) return story
+
+        return {
+          ...story,
+          comment: nextComment,
+          commentUpdatedAt: new Date().toISOString(),
+          updatedByUserId: this.currentUserId || null,
+          updatedAt: new Date().toISOString()
+        }
+      })
+
+      await db.updateTicket(this.ticket.id, { userStories: stories })
+      await this.loadTicket()
+    },
     async addUserStory() {
       if (!this.ticket?.id || !this.userStoryForm.title.trim()) return
 
@@ -1661,10 +1999,14 @@ export default {
       stories.push({
         id: Date.now(),
         title: this.userStoryForm.title.trim(),
+        recettePhase: this.normalizeStoryPhase(this.userStoryForm.phase),
         description: (this.userStoryForm.description || '').trim(),
+        comment: (this.userStoryForm.comment || '').trim(),
         acceptanceCriteria: (this.userStoryForm.acceptanceCriteria || '').trim(),
         acceptanceCriteriaItems: criteriaItems,
         status: 'todo',
+        createdByUserId: this.currentUserId || null,
+        updatedByUserId: this.currentUserId || null,
         createdAt: new Date().toISOString()
       })
 
@@ -1672,7 +2014,9 @@ export default {
       this.userStoryForm = {
         title: '',
         description: '',
-        acceptanceCriteria: ''
+        acceptanceCriteria: '',
+        phase: this.selectedStoryPhaseFilter === 'all' ? this.normalizeStoryPhase(this.userStoryForm.phase) : this.selectedStoryPhaseFilter,
+        comment: ''
       }
       await this.loadTicket()
     },
@@ -1684,10 +2028,29 @@ export default {
           return {
             ...story,
             status,
+            updatedByUserId: this.currentUserId || null,
             updatedAt: new Date().toISOString()
           }
         }
         return story
+      })
+
+      await db.updateTicket(this.ticket.id, { userStories: stories })
+      await this.loadTicket()
+    },
+    async updateUserStoryPhase(storyId, phase) {
+      if (!this.ticket?.id) return
+
+      const normalizedPhase = this.normalizeStoryPhase(phase)
+      const stories = (this.ticket.userStories || []).map(story => {
+        if (story.id !== storyId) return story
+
+        return {
+          ...story,
+          recettePhase: normalizedPhase,
+          updatedByUserId: this.currentUserId || null,
+          updatedAt: new Date().toISOString()
+        }
       })
 
       await db.updateTicket(this.ticket.id, { userStories: stories })
@@ -1746,6 +2109,7 @@ export default {
         return {
           ...story,
           acceptanceCriteriaItems: nextCriteria,
+          updatedByUserId: this.currentUserId || null,
           updatedAt: new Date().toISOString()
         }
       })
@@ -1790,6 +2154,7 @@ export default {
                   attachments: [...(criterion.attachments || []), attachment]
                 }
               }),
+              updatedByUserId: this.currentUserId || null,
               updatedAt: new Date().toISOString()
             }
           })
@@ -1819,6 +2184,7 @@ export default {
               attachments: (criterion.attachments || []).filter(att => att.id !== attachmentId)
             }
           }),
+          updatedByUserId: this.currentUserId || null,
           updatedAt: new Date().toISOString()
         }
       })
@@ -1850,6 +2216,7 @@ export default {
               attachments: []
             }
           ],
+          updatedByUserId: this.currentUserId || null,
           updatedAt: new Date().toISOString()
         }
       })
@@ -1871,6 +2238,7 @@ export default {
         return {
           ...story,
           acceptanceCriteriaItems: currentCriteria.filter(criterion => criterion.id !== criterionId),
+          updatedByUserId: this.currentUserId || null,
           updatedAt: new Date().toISOString()
         }
       })

@@ -58,6 +58,101 @@
           <label>URL Préproduction</label>
           <input v-model="form.preprodUrl" type="url" placeholder="https://preprod.client.com" />
         </div>
+        <div class="form-group" style="padding: 1rem; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc;">
+          <label style="margin-bottom: 0.75rem; display: block;">🐙 Connecteur GitHub</label>
+          <p style="margin: 0 0 0.75rem 0; color: #64748b; font-size: 0.92rem;">
+            Associez un dépôt GitHub au projet depuis son édition.
+          </p>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0.75rem; align-items: end;">
+            <div class="form-group" style="margin: 0;">
+              <label>Dépôt GitHub</label>
+              <input
+                v-model="githubConnectUrl"
+                type="text"
+                placeholder="https://github.com/owner/repo ou owner/repo"
+              />
+            </div>
+            <div class="form-group" style="margin: 0;">
+              <label>Token GitHub (optionnel, requis pour dépôt privé)</label>
+              <input
+                v-model="githubTokenInput"
+                type="password"
+                placeholder="ghp_..."
+              />
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap;">
+            <button type="button" class="btn btn-primary" :disabled="githubConnecting || !githubConnectUrl.trim()" @click="connectGithubRepo">
+              {{ githubConnecting ? '⏳ Connexion...' : '🔗 Associer le dépôt' }}
+            </button>
+            <button type="button" v-if="form.githubRepoUrl" class="btn btn-secondary" :disabled="githubConnecting" @click="unlinkGithubRepo">
+              🧹 Dissocier
+            </button>
+          </div>
+
+          <div v-if="githubConnectError" class="alert-inline alert-error" style="margin-top: 0.75rem;">
+            {{ githubConnectError }}
+          </div>
+
+          <div v-if="githubRepoPreview" style="margin-top: 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+            <span class="badge badge-info">{{ githubRepoPreview.fullName }}</span>
+            <span class="badge" :class="githubRepoPreview.private ? 'badge-high' : 'badge-completed'">
+              {{ githubRepoPreview.private ? 'Privé' : 'Public' }}
+            </span>
+            <span class="badge badge-pending">🌿 {{ githubRepoPreview.defaultBranch }}</span>
+            <span style="color: #64748b; font-size: 0.9rem;">⭐ {{ githubRepoPreview.stars }} • Issues: {{ githubRepoPreview.openIssues }}</span>
+          </div>
+        </div>
+
+        <div class="form-group" style="padding: 1rem; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc;">
+          <label style="margin-bottom: 0.75rem; display: block;">🦊 Connecteur GitLab</label>
+          <p style="margin: 0 0 0.75rem 0; color: #64748b; font-size: 0.92rem;">
+            Associez un projet GitLab au projet depuis son édition.
+          </p>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0.75rem; align-items: end;">
+            <div class="form-group" style="margin: 0;">
+              <label>Projet GitLab</label>
+              <input
+                v-model="gitlabConnectUrl"
+                type="text"
+                placeholder="https://gitlab.com/groupe/projet ou groupe/projet"
+              />
+            </div>
+            <div class="form-group" style="margin: 0;">
+              <label>Token GitLab (optionnel, requis pour privé)</label>
+              <input
+                v-model="gitlabTokenInput"
+                type="password"
+                placeholder="glpat-..."
+              />
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap;">
+            <button type="button" class="btn btn-primary" :disabled="gitlabConnecting || !gitlabConnectUrl.trim()" @click="connectGitlabRepo">
+              {{ gitlabConnecting ? '⏳ Connexion...' : '🔗 Associer le projet' }}
+            </button>
+            <button type="button" v-if="form.gitlabRepoUrl" class="btn btn-secondary" :disabled="gitlabConnecting" @click="unlinkGitlabRepo">
+              🧹 Dissocier
+            </button>
+          </div>
+
+          <div v-if="gitlabConnectError" class="alert-inline alert-error" style="margin-top: 0.75rem;">
+            {{ gitlabConnectError }}
+          </div>
+
+          <div v-if="gitlabRepoPreview" style="margin-top: 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+            <span class="badge badge-info">{{ gitlabRepoPreview.projectPath }}</span>
+            <span class="badge" :class="gitlabRepoPreview.private ? 'badge-high' : 'badge-completed'">
+              {{ gitlabRepoPreview.private ? 'Privé' : 'Public' }}
+            </span>
+            <span class="badge badge-pending">🌿 {{ gitlabRepoPreview.defaultBranch }}</span>
+            <span style="color: #64748b; font-size: 0.9rem;">⭐ {{ gitlabRepoPreview.stars }} • Issues: {{ gitlabRepoPreview.openIssues }}</span>
+          </div>
+        </div>
         <div class="form-group">
           <label>Statut</label>
           <select v-model="form.status">
@@ -74,15 +169,6 @@
               {{ user.displayName }} ({{ user.username }})
             </option>
           </select>
-        </div>
-        <div class="form-group">
-          <label style="display:flex; align-items:center; gap:0.5rem;">
-            <input type="checkbox" v-model="form.useDefaultKanbanTemplate" style="width:auto;" />
-            Utiliser le modèle d'étapes Kanban par défaut
-          </label>
-          <small style="color:#666; display:block; margin-top:0.35rem;">
-            Étapes par défaut : À faire, En cours, Terminé.
-          </small>
         </div>
         <div class="form-group">
           <label>Followers du projet</label>
@@ -153,8 +239,58 @@
 
 <script>
 import { db } from '../services/database-new'
+import { parseGithubRepoRef, fetchGithubRepository } from '../services/github'
+import { parseGitlabRepoRef, fetchGitlabRepository } from '../services/gitlab'
 import RichTextEditor from './RichTextEditor.vue'
 import { auth } from '../services/auth'
+
+const createProjectForm = (currentUserId = null) => ({
+  name: '',
+  description: '',
+  clientName: '',
+  clientEmail: '',
+  prodUrl: '',
+  preprodUrl: '',
+  githubRepoUrl: '',
+  githubRepoOwner: '',
+  githubRepoName: '',
+  githubDefaultBranch: '',
+  githubPrivate: false,
+  gitlabRepoUrl: '',
+  gitlabProjectPath: '',
+  gitlabProjectId: null,
+  gitlabDefaultBranch: '',
+  gitlabPrivate: false,
+  status: 'active',
+  assignedUserId: currentUserId,
+  followerUserIds: currentUserId ? [currentUserId] : []
+})
+
+const buildGithubPreview = projectLike => {
+  if (!projectLike?.githubRepoName) return null
+
+  return {
+    fullName: `${projectLike.githubRepoOwner || ''}/${projectLike.githubRepoName || ''}`.replace(/^\//, ''),
+    defaultBranch: projectLike.githubDefaultBranch || 'main',
+    private: Boolean(projectLike.githubPrivate),
+    stars: 0,
+    openIssues: 0
+  }
+}
+
+const buildGitlabPreview = projectLike => {
+  if (!projectLike?.gitlabProjectPath) return null
+
+  return {
+    projectPath: projectLike.gitlabProjectPath,
+    defaultBranch: projectLike.gitlabDefaultBranch || 'main',
+    private: Boolean(projectLike.gitlabPrivate),
+    stars: 0,
+    openIssues: 0,
+    htmlUrl: projectLike.gitlabRepoUrl,
+    projectId: projectLike.gitlabProjectId
+  }
+}
 
 export default {
   name: 'ProjectsList',
@@ -172,18 +308,17 @@ export default {
       selectedProjects: [],
       showFavoritesOnly: false,
       searchQuery: '',
-      form: {
-        name: '',
-        description: '',
-        clientName: '',
-        clientEmail: '',
-        prodUrl: '',
-        preprodUrl: '',
-        status: 'active',
-        assignedUserId: null,
-        useDefaultKanbanTemplate: true,
-        followerUserIds: []
-      }
+      githubConnectUrl: '',
+      githubTokenInput: localStorage.getItem('github.connector.token') || '',
+      githubConnectError: '',
+      githubConnecting: false,
+      githubRepoPreview: null,
+      gitlabConnectUrl: '',
+      gitlabTokenInput: localStorage.getItem('gitlab.connector.token') || '',
+      gitlabConnectError: '',
+      gitlabConnecting: false,
+      gitlabRepoPreview: null,
+      form: createProjectForm(null)
     }
   },
   computed: {
@@ -217,6 +352,7 @@ export default {
   },
   async mounted() {
     this.currentUserId = auth.getSession()?.userId || null
+    this.form = createProjectForm(this.currentUserId)
     this.users = await db.getActiveUsers()
     await this.loadProjects()
   },
@@ -232,22 +368,12 @@ export default {
           ...this.form,
           followerUserIds
         })
-
-        const enabledNow = this.form.useDefaultKanbanTemplate === true
-        const enabledBefore = this.editingProject.useDefaultKanbanTemplate === true
-        if (enabledNow && !enabledBefore) {
-          await this.applyDefaultKanbanModelToProject(this.editingProject.id, true)
-        }
       } else {
-        const createdId = await db.addProject({
+        await db.addProject({
           ...this.form,
           assignedUserId: this.form.assignedUserId ?? this.currentUserId,
           followerUserIds
         })
-        const projectId = Number(createdId)
-        if (this.form.useDefaultKanbanTemplate && Number.isFinite(projectId) && projectId > 0) {
-          await this.applyDefaultKanbanModelToProject(projectId, true)
-        }
       }
       await this.loadProjects()
       this.cancelForm()
@@ -255,63 +381,138 @@ export default {
     editProject(project) {
       this.editingProject = project
       this.form = {
+        ...createProjectForm(this.currentUserId),
         name: project.name,
         description: project.description || '',
         clientName: project.clientName || '',
         clientEmail: project.clientEmail || '',
         prodUrl: project.prodUrl || '',
         preprodUrl: project.preprodUrl || '',
+        githubRepoUrl: project.githubRepoUrl || '',
+        githubRepoOwner: project.githubRepoOwner || '',
+        githubRepoName: project.githubRepoName || '',
+        githubDefaultBranch: project.githubDefaultBranch || '',
+        githubPrivate: Boolean(project.githubPrivate),
+        gitlabRepoUrl: project.gitlabRepoUrl || '',
+        gitlabProjectPath: project.gitlabProjectPath || '',
+        gitlabProjectId: project.gitlabProjectId ?? null,
+        gitlabDefaultBranch: project.gitlabDefaultBranch || '',
+        gitlabPrivate: Boolean(project.gitlabPrivate),
         status: project.status,
         assignedUserId: project.assignedUserId ?? null,
-        useDefaultKanbanTemplate: project.useDefaultKanbanTemplate !== false,
         followerUserIds: this.normalizeFollowerUserIds(project.followerUserIds, project.assignedUserId)
       }
+      this.syncConnectorStateFromForm()
       this.showForm = true
     },
     cancelForm() {
       this.showForm = false
       this.editingProject = null
-      this.form = {
-        name: '',
-        description: '',
-        clientName: '',
-        clientEmail: '',
-        prodUrl: '',
-        preprodUrl: '',
-        status: 'active',
-        assignedUserId: this.currentUserId,
-        useDefaultKanbanTemplate: true,
-        followerUserIds: this.currentUserId ? [this.currentUserId] : []
+      this.form = createProjectForm(this.currentUserId)
+      this.resetConnectorState()
+    },
+    resetConnectorState() {
+      this.githubConnectUrl = ''
+      this.githubConnectError = ''
+      this.githubConnecting = false
+      this.githubRepoPreview = null
+      this.gitlabConnectUrl = ''
+      this.gitlabConnectError = ''
+      this.gitlabConnecting = false
+      this.gitlabRepoPreview = null
+    },
+    syncConnectorStateFromForm() {
+      this.githubConnectUrl = this.form.githubRepoUrl || (this.form.githubRepoOwner && this.form.githubRepoName ? `${this.form.githubRepoOwner}/${this.form.githubRepoName}` : '')
+      this.githubConnectError = ''
+      this.githubConnecting = false
+      this.githubRepoPreview = buildGithubPreview(this.form)
+
+      this.gitlabConnectUrl = this.form.gitlabRepoUrl || this.form.gitlabProjectPath || ''
+      this.gitlabConnectError = ''
+      this.gitlabConnecting = false
+      this.gitlabRepoPreview = buildGitlabPreview(this.form)
+    },
+    async connectGithubRepo() {
+      this.githubConnectError = ''
+      const rawInput = String(this.githubConnectUrl || '').trim()
+      if (!rawInput) {
+        this.githubConnectError = 'Veuillez saisir un dépôt GitHub'
+        return
+      }
+
+      this.githubConnecting = true
+      try {
+        const ref = parseGithubRepoRef(rawInput)
+        const token = String(this.githubTokenInput || '').trim()
+        const repo = await fetchGithubRepository(ref, token || undefined)
+
+        this.form.githubRepoUrl = repo.htmlUrl
+        this.form.githubRepoOwner = repo.owner
+        this.form.githubRepoName = repo.name
+        this.form.githubDefaultBranch = repo.defaultBranch
+        this.form.githubPrivate = repo.private
+        this.githubConnectUrl = repo.htmlUrl
+        this.githubRepoPreview = repo
+
+        if (token) {
+          localStorage.setItem('github.connector.token', token)
+        }
+      } catch (error) {
+        this.githubConnectError = error?.message || 'Impossible de connecter le dépôt GitHub'
+      } finally {
+        this.githubConnecting = false
       }
     },
-    async applyDefaultKanbanModelToProject(projectId, force = false) {
-      const defaultStages = [
-        { name: 'À faire', sequence: 10, color: '#fff3cd', folded: false },
-        { name: 'En cours', sequence: 20, color: '#cfe2ff', folded: false },
-        { name: 'Terminé', sequence: 30, color: '#d1e7dd', folded: false }
-      ]
-
-      if (!force) {
-        const existing = await db.getStagesByProject(projectId)
-        if ((existing || []).length > 0) return
+    unlinkGithubRepo() {
+      this.form.githubRepoUrl = ''
+      this.form.githubRepoOwner = ''
+      this.form.githubRepoName = ''
+      this.form.githubDefaultBranch = ''
+      this.form.githubPrivate = false
+      this.githubConnectUrl = ''
+      this.githubConnectError = ''
+      this.githubRepoPreview = null
+    },
+    async connectGitlabRepo() {
+      this.gitlabConnectError = ''
+      const rawInput = String(this.gitlabConnectUrl || '').trim()
+      if (!rawInput) {
+        this.gitlabConnectError = 'Veuillez saisir un projet GitLab'
+        return
       }
 
-      const allStages = await db.getAllKanbanStages()
-      const stageItems = []
-      const compatColumns = []
+      this.gitlabConnecting = true
+      try {
+        const ref = parseGitlabRepoRef(rawInput)
+        const token = String(this.gitlabTokenInput || '').trim()
+        const repo = await fetchGitlabRepository(ref, token || undefined)
 
-      for (const stageDef of defaultStages) {
-        const existing = (allStages || []).find(s => String(s.name || '').trim().toLowerCase() === stageDef.name.toLowerCase())
-        const stageId = existing?.id ? Number(existing.id) : Number(await db.addKanbanStage(stageDef))
-        stageItems.push({ stageId, sequence: stageDef.sequence })
-        compatColumns.push({ id: String(stageId), label: stageDef.name, color: stageDef.color })
+        this.form.gitlabRepoUrl = repo.htmlUrl
+        this.form.gitlabProjectPath = repo.projectPath
+        this.form.gitlabProjectId = repo.projectId || null
+        this.form.gitlabDefaultBranch = repo.defaultBranch
+        this.form.gitlabPrivate = repo.private
+        this.gitlabConnectUrl = repo.htmlUrl
+        this.gitlabRepoPreview = repo
+
+        if (token) {
+          localStorage.setItem('gitlab.connector.token', token)
+        }
+      } catch (error) {
+        this.gitlabConnectError = error?.message || 'Impossible de connecter le projet GitLab'
+      } finally {
+        this.gitlabConnecting = false
       }
-
-      await db.setProjectStages(projectId, stageItems)
-      await db.updateProject(projectId, {
-        useDefaultKanbanTemplate: true,
-        kanbanColumns: compatColumns
-      })
+    },
+    unlinkGitlabRepo() {
+      this.form.gitlabRepoUrl = ''
+      this.form.gitlabProjectPath = ''
+      this.form.gitlabProjectId = null
+      this.form.gitlabDefaultBranch = ''
+      this.form.gitlabPrivate = false
+      this.gitlabConnectUrl = ''
+      this.gitlabConnectError = ''
+      this.gitlabRepoPreview = null
     },
     normalizeFollowerUserIds(followerUserIds, assignedUserId = null) {
       const ids = new Set()

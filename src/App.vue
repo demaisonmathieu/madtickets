@@ -107,6 +107,7 @@ export default {
             { id: 'tasks', label: '✅ Tâches Odoo', to: '/tasks', odooOnly: true }
           ]
         },
+        { id: 'recettes', type: 'link', label: '🧪 Recettes', to: '/recettes' },
         { id: 'documents', type: 'link', label: '📁 Documents', to: '/documents' },
         { id: 'passwords', type: 'link', label: '🔐 Mots de passe', to: '/passwords' },
         {
@@ -534,6 +535,9 @@ body {
   background: #4DBA87;
   color: white;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  position: sticky;
+  top: 0;
+  z-index: 100;
 }
 
 .nav-container {

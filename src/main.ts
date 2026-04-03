@@ -29,6 +29,8 @@ import MenuConfiguration from './components/MenuConfiguration.vue'
 import KanbanStagesConfig from './components/KanbanStagesConfig.vue'
 import LocalTaskDetail from './components/LocalTaskDetail.vue'
 import RecetteSharePublic from './components/RecetteSharePublic.vue'
+import RecettesList from './components/RecettesList.vue'
+import Administration from './components/Administration.vue'
 import { auth } from './services/auth'
 
 // Enregistrement du Service Worker désactivé en dev
@@ -57,6 +59,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/dashboard', component: Dashboard },
   { path: '/gantt-users', component: UserGanttView },
   { path: '/menu-config', component: MenuConfiguration },
+  { path: '/recettes', component: RecettesList },
   { path: '/projects', component: ProjectsList },
   { path: '/projects/:id', component: ProjectDetail },
   { 
@@ -78,6 +81,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/taches', redirect: '/tasks' },
   { path: '/documents', component: DocumentsGED },
   { path: '/passwords', component: PasswordManager },
+  { path: '/admin', component: Administration, meta: { adminOnly: true } },
   { path: '/users', component: UsersManagement, meta: { adminOnly: true } },
   { path: '/odoo', component: OdooSync, meta: { adminOnly: true } },
   { path: '/data', component: DataManagement, meta: { adminOnly: true } },

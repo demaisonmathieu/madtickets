@@ -8,22 +8,67 @@
       ❌ {{ error }}
     </div>
 
-    <div v-else-if="!project" class="error-state">
-      ❌ Projet non trouvé
+    <div v-else-if="!recette" class="error-state">
+      ❌ Recette non trouvée
     </div>
 
     <div v-else class="recette-share-content">
       <div class="recette-header">
-        <h1>🧪 Recette - {{ project.name }}</h1>
-        <p v-if="project.description" class="project-desc">{{ project.description }}</p>
-        <div v-if="project.preprodUrl || project.prodUrl" style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.75rem;">
-          <a v-if="project.preprodUrl" :href="project.preprodUrl" target="_blank" rel="noopener noreferrer" class="btn-recette btn-recette-secondary">🔗 Préproduction</a>
-          <a v-if="project.prodUrl" :href="project.prodUrl" target="_blank" rel="noopener noreferrer" class="btn-recette btn-recette-secondary">🔗 Production</a>
+        <h1>🧪 Recette - {{ recette.name }}</h1>
+        <p v-if="recette.description" class="project-desc">{{ recette.description }}</p>
+        <p v-if="project && project.name" class="project-desc" style="margin-top:0.25rem; font-size:0.92rem;">📁 Projet lié : {{ project.name }}</p>
+        <div v-if="recette.preprodUrl || recette.prodUrl" style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.75rem;">
+          <a v-if="recette.preprodUrl" :href="recette.preprodUrl" target="_blank" rel="noopener noreferrer" class="btn-recette btn-recette-secondary">🔗 Préproduction</a>
+          <a v-if="recette.prodUrl" :href="recette.prodUrl" target="_blank" rel="noopener noreferrer" class="btn-recette btn-recette-secondary">🔗 Production</a>
+        </div>
+      </div>
+
+      <!-- Comptes de test -->
+      <div v-if="recette.testAccounts && recette.testAccounts.length > 0" class="test-accounts-section">
+        <h2>🔑 Comptes de test</h2>
+        <div class="test-accounts-list">
+          <div
+            v-for="account in recette.testAccounts"
+            :key="account.id"
+            class="test-account-card"
+          >
+            <div class="test-account-description" v-if="account.description">
+              <span class="test-account-role">{{ account.description }}</span>
+            </div>
+            <div class="test-account-credentials">
+              <div class="test-account-field">
+                <span class="test-account-label">Login</span>
+                <code class="test-account-value">{{ account.login }}</code>
+                <button
+                  type="button"
+                  class="btn-copy"
+                  :class="{ copied: copiedKeys[account.id + '_login'] }"
+                  @click="copyToClipboard(account.login, account.id + '_login')"
+                  :title="'Copier le login : ' + account.login"
+                >
+                  {{ copiedKeys[account.id + '_login'] ? '✅' : '📋' }}
+                </button>
+              </div>
+              <div class="test-account-field">
+                <span class="test-account-label">Mot de passe</span>
+                <code class="test-account-value">{{ account.password }}</code>
+                <button
+                  type="button"
+                  class="btn-copy"
+                  :class="{ copied: copiedKeys[account.id + '_password'] }"
+                  @click="copyToClipboard(account.password, account.id + '_password')"
+                  :title="'Copier le mot de passe'"
+                >
+                  {{ copiedKeys[account.id + '_password'] ? '✅' : '📋' }}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
       <div v-if="recetteTickets.length === 0" class="empty-state">
-        Aucun ticket en recette pour ce projet.
+        Aucun ticket affecté à cette recette.
       </div>
 
       <div v-else class="recette-list">
@@ -64,12 +109,26 @@
                 placeholder="Titre de la user story *"
                 required
               />
+              <input
+                class="public-input"
+                :value="newStoryByTicketId[ticket.id]?.phase || 'Phase 1'"
+                @input="onNewStoryFieldInput(ticket.id, 'phase', $event.target.value)"
+                placeholder="Phase de recette *"
+                required
+              />
               <textarea
                 class="public-textarea"
                 rows="2"
                 :value="newStoryByTicketId[ticket.id]?.description || ''"
                 @input="onNewStoryFieldInput(ticket.id, 'description', $event.target.value)"
                 placeholder="Description (optionnel)"
+              ></textarea>
+              <textarea
+                class="public-textarea"
+                rows="2"
+                :value="newStoryByTicketId[ticket.id]?.comment || ''"
+                @input="onNewStoryFieldInput(ticket.id, 'comment', $event.target.value)"
+                placeholder="Commentaire de recette (optionnel)"
               ></textarea>
               <textarea
                 class="public-textarea"
@@ -86,10 +145,39 @@
             </form>
 
             <div v-if="!ticket.userStories || ticket.userStories.length === 0" style="color:#999; font-size:0.9rem;">Aucune user story</div>
-            <div v-for="story in ticket.userStories" :key="story.id" class="story-item">
+            <div v-for="(story, storyIndex) in ticket.userStories" :key="`${ticket.id}-${story?.id ?? 'story'}-${storyIndex}`" class="story-item">
               <div class="story-title">{{ story.title }}</div>
+              <div style="font-size:0.85rem; color:#475569; margin-bottom:0.35rem;">
+                🧪 Phase : <strong>{{ story.recettePhase || story.phase || 'Phase 1' }}</strong>
+              </div>
+              <div v-if="getStoryComment(story)" style="font-size:0.9rem; color:#1e3a8a; margin-bottom:0.45rem; white-space:pre-wrap; background:#f8fbff; border:1px solid #dbeafe; border-radius:6px; padding:0.45rem 0.55rem;">
+                <strong>💬 Commentaire :</strong>
+                <div style="margin-top:0.2rem;">{{ getStoryComment(story) }}</div>
+              </div>
+
+              <div style="margin-bottom:0.55rem;">
+                <label style="display:block; font-size:0.82rem; color:#64748b; margin-bottom:0.25rem;">Modifier le commentaire de la user story</label>
+                <textarea
+                  class="public-textarea"
+                  rows="2"
+                  :value="getStoryCommentDraft(ticket.id, story, storyIndex)"
+                  @input="onStoryCommentInput(ticket.id, story, storyIndex, $event.target.value)"
+                  placeholder="Ajouter un commentaire sur cette user story..."
+                ></textarea>
+                <div style="display:flex; justify-content:flex-end; margin-top:0.35rem;">
+                  <button
+                    type="button"
+                    class="btn-recette btn-recette-secondary"
+                    :disabled="isStoryCommentSaving(ticket.id, story.id, storyIndex)"
+                    @click="saveStoryComment(ticket, story, storyIndex)"
+                  >
+                    {{ isStoryCommentSaving(ticket.id, story.id, storyIndex) ? '⏳ Enregistrement...' : '💾 Enregistrer le commentaire' }}
+                  </button>
+                </div>
+              </div>
+
               <div class="criteria-list">
-                <label v-for="criterion in getStoryCriteria(story)" :key="criterion.id" class="criterion" style="display:flex; flex-direction:column; align-items:stretch; gap:0.35rem;">
+                <label v-for="(criterion, criterionIndex) in getStoryCriteria(story)" :key="`${ticket.id}-${story?.id ?? 'story'}-${storyIndex}-${criterion?.id ?? 'criterion'}-${criterionIndex}`" class="criterion" style="display:flex; flex-direction:column; align-items:stretch; gap:0.35rem;">
                   <div style="display:flex; align-items:center; gap:0.5rem; width:100%;">
                     <span :style="getCriterionResult(criterion) === 'ok' ? 'text-decoration:line-through;color:#666;flex:1;' : (getCriterionResult(criterion) === 'ko' ? 'color:#dc3545;font-weight:600;flex:1;' : 'flex:1;')">{{ criterion.text }}</span>
 
@@ -226,18 +314,22 @@ export default {
   name: 'RecetteSharePublic',
   data() {
     return {
+      recette: null,
       project: null,
       allTickets: [],
       loading: true,
       error: null,
       savingCriteriaKeys: {},
       storySavingKeys: {},
+      storyCommentSavingKeys: {},
+      storyCommentDrafts: {},
       newStoryByTicketId: {},
       statusCommentByTicketId: {},
       savingStatusKeys: {},
       statusSavedKeys: {},
       showAttachmentPreview: false,
-      currentAttachment: null
+      currentAttachment: null,
+      copiedKeys: {}
     }
   },
   computed: {
@@ -271,8 +363,10 @@ export default {
           return
         }
 
+        this.recette = body.recette || null
         this.project = body.project || null
         this.allTickets = Array.isArray(body.tickets) ? body.tickets : []
+        this.storyCommentDrafts = {}
       } catch (err) {
         console.error('Erreur chargement recette share:', err)
         this.error = 'Erreur lors du chargement des données'
@@ -300,6 +394,70 @@ export default {
       }
       return generated
     },
+    getStoryComment(story) {
+      return String(story?.comment || story?.commentaire || story?.recetteComment || '').trim()
+    },
+    getStoryRuntimeKey(ticketId, storyId, storyIndex) {
+      return `${ticketId}:${storyId ?? storyIndex}`
+    },
+    isStoryCommentSaving(ticketId, storyId, storyIndex) {
+      const key = this.getStoryRuntimeKey(ticketId, storyId, storyIndex)
+      return Boolean(this.storyCommentSavingKeys[key])
+    },
+    getStoryCommentDraft(ticketId, story, storyIndex) {
+      const key = this.getStoryRuntimeKey(ticketId, story?.id, storyIndex)
+      if (Object.prototype.hasOwnProperty.call(this.storyCommentDrafts, key)) {
+        return this.storyCommentDrafts[key]
+      }
+      return this.getStoryComment(story)
+    },
+    onStoryCommentInput(ticketId, story, storyIndex, value) {
+      const key = this.getStoryRuntimeKey(ticketId, story?.id, storyIndex)
+      this.storyCommentDrafts = {
+        ...this.storyCommentDrafts,
+        [key]: value
+      }
+    },
+    async saveStoryComment(ticket, story, storyIndex) {
+      const token = this.$route.params.token
+      if (!story?.id) {
+        alert('❌ Impossible de sauvegarder : storyId manquant')
+        return
+      }
+
+      const key = this.getStoryRuntimeKey(ticket.id, story.id, storyIndex)
+      const comment = String(this.getStoryCommentDraft(ticket.id, story, storyIndex) || '').trim()
+      this.storyCommentSavingKeys = {
+        ...this.storyCommentSavingKeys,
+        [key]: true
+      }
+
+      try {
+        const response = await fetch(
+          `${getApiBaseUrl()}/public/recette/${encodeURIComponent(String(token || ''))}/tickets/${ticket.id}/stories/comment`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              storyId: story.id,
+              comment
+            })
+          }
+        )
+
+        const body = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(body?.error || 'Échec de la mise à jour du commentaire')
+
+        const idx = this.allTickets.findIndex(t => Number(t.id) === Number(ticket.id))
+        if (idx >= 0) this.allTickets.splice(idx, 1, body)
+      } catch (err) {
+        alert(`❌ ${err?.message || 'Erreur lors de la sauvegarde du commentaire'}`)
+      } finally {
+        const next = { ...this.storyCommentSavingKeys }
+        delete next[key]
+        this.storyCommentSavingKeys = next
+      }
+    },
     getCriterionKey(ticketId, storyId, criterionId) {
       return `${ticketId}:${storyId}:${criterionId}`
     },
@@ -311,7 +469,7 @@ export default {
       return Boolean(this.storySavingKeys[ticketId])
     },
     onNewStoryFieldInput(ticketId, field, value) {
-      const current = this.newStoryByTicketId[ticketId] || { title: '', description: '', acceptanceCriteria: '' }
+      const current = this.newStoryByTicketId[ticketId] || { title: '', phase: 'Phase 1', description: '', comment: '', acceptanceCriteria: '' }
       this.newStoryByTicketId = {
         ...this.newStoryByTicketId,
         [ticketId]: {
@@ -327,8 +485,9 @@ export default {
     },
     async addPublicUserStory(ticket) {
       const token = this.$route.params.token
-      const form = this.newStoryByTicketId[ticket.id] || { title: '', description: '', acceptanceCriteria: '' }
+      const form = this.newStoryByTicketId[ticket.id] || { title: '', phase: 'Phase 1', description: '', comment: '', acceptanceCriteria: '' }
       const title = String(form.title || '').trim()
+      const phase = String(form.phase || '').trim() || 'Phase 1'
       if (!title) {
         alert('Le titre de la user story est requis')
         return
@@ -343,7 +502,9 @@ export default {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               title,
+              phase,
               description: String(form.description || '').trim(),
+              comment: String(form.comment || '').trim(),
               acceptanceCriteria: String(form.acceptanceCriteria || '').trim()
             })
           }
@@ -354,7 +515,7 @@ export default {
         if (idx >= 0) this.allTickets.splice(idx, 1, body)
         this.newStoryByTicketId = {
           ...this.newStoryByTicketId,
-          [ticket.id]: { title: '', description: '', acceptanceCriteria: '' }
+          [ticket.id]: { title: '', phase, description: '', comment: '', acceptanceCriteria: '' }
         }
       } catch (err) {
         alert(`❌ ${err?.message || 'Erreur lors de l\'ajout de la user story'}`)
@@ -523,6 +684,29 @@ export default {
         'rejected': '❌ Recette KO'
       }
       return labels[status] || '🧪 À recetter'
+    },
+    async copyToClipboard(text, key) {
+      try {
+        await navigator.clipboard.writeText(text)
+        this.copiedKeys = { ...this.copiedKeys, [key]: true }
+        setTimeout(() => {
+          this.copiedKeys = { ...this.copiedKeys, [key]: false }
+        }, 2000)
+      } catch (err) {
+        // Fallback pour les navigateurs sans clipboard API
+        const textarea = document.createElement('textarea')
+        textarea.value = text
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textarea)
+        this.copiedKeys = { ...this.copiedKeys, [key]: true }
+        setTimeout(() => {
+          this.copiedKeys = { ...this.copiedKeys, [key]: false }
+        }, 2000)
+      }
     },
     formatDateTime(dateStr) {
       if (!dateStr) return ''
@@ -788,6 +972,99 @@ export default {
   background: white;
   border-radius: 0 0 8px 8px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+/* Comptes de test */
+.test-accounts-section {
+  background: white;
+  border-radius: 8px;
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+  border-left: 4px solid #f59e0b;
+}
+
+.test-accounts-section h2 {
+  margin: 0 0 1rem 0;
+  font-size: 1.1rem;
+  color: #92400e;
+}
+
+.test-accounts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.test-account-card {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+}
+
+.test-account-description {
+  margin-bottom: 0.5rem;
+}
+
+.test-account-role {
+  font-weight: 600;
+  color: #78350f;
+  font-size: 0.95rem;
+}
+
+.test-account-credentials {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.test-account-field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: white;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  padding: 0.4rem 0.65rem;
+  flex: 1;
+  min-width: 180px;
+}
+
+.test-account-label {
+  font-size: 0.78rem;
+  color: #92400e;
+  font-weight: 600;
+  white-space: nowrap;
+  min-width: 80px;
+}
+
+.test-account-value {
+  flex: 1;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9rem;
+  color: #1e293b;
+  word-break: break-all;
+  background: transparent;
+}
+
+.btn-copy {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0.2rem 0.35rem;
+  border-radius: 4px;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+
+.btn-copy:hover {
+  background: #fde68a;
+}
+
+.btn-copy.copied {
+  color: #16a34a;
 }
 
 .recette-actions-section {

@@ -40,8 +40,16 @@
             <strong>URL Préproduction :</strong>
             <a :href="project.preprodUrl" target="_blank" rel="noopener noreferrer">{{ project.preprodUrl }}</a>
           </div>
+          <div class="info-item" v-if="project.githubRepoUrl">
+            <strong>GitHub :</strong>
+            <a :href="project.githubRepoUrl" target="_blank" rel="noopener noreferrer">{{ project.githubRepoOwner }}/{{ project.githubRepoName }}</a>
+          </div>
+          <div class="info-item" v-if="project.gitlabRepoUrl">
+            <strong>GitLab :</strong>
+            <a :href="project.gitlabRepoUrl" target="_blank" rel="noopener noreferrer">{{ project.gitlabProjectPath }}</a>
+          </div>
         </div>
-        
+
         <div style="margin-top: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
           <button @click="$router.push(`/projects/${project.id}/sprints`)" class="btn btn-primary">🏃 Gérer les Sprints</button>
           <button @click="showKanbanEditor = !showKanbanEditor" class="btn btn-secondary">
@@ -53,17 +61,6 @@
           <button v-if="project.chiffrageEnabled" @click="exportChiffrage" class="btn btn-primary">
             📊 Exporter le Chiffrage
           </button>
-        </div>
-
-        <div style="margin-top: 1rem; padding: 0.75rem; background: #f8f9fa; border-radius: 8px;">
-          <label style="display: inline-flex; align-items: center; gap: 0.5rem;">
-            <input type="checkbox" v-model="project.useDefaultKanbanTemplate" style="width:auto;" />
-            Utiliser le modèle d'étapes Kanban par défaut
-          </label>
-          <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.6rem;">
-            <button class="btn btn-secondary btn-sm" @click="saveDefaultKanbanTemplatePreference">💾 Enregistrer la préférence</button>
-            <button class="btn btn-primary btn-sm" @click="applyDefaultKanbanTemplateNow">📊 Appliquer maintenant</button>
-          </div>
         </div>
 
         <!-- Configuration du Chiffrage -->
@@ -150,6 +147,20 @@
             :class="['btn', projectContentView === 'attachments' ? 'btn-primary' : 'btn-secondary']"
           >
             📎 Pièces jointes
+          </button>
+          <button
+            v-if="projectGithubRef"
+            @click="setProjectContentView('githubCommits')"
+            :class="['btn', projectContentView === 'githubCommits' ? 'btn-primary' : 'btn-secondary']"
+          >
+            🐙 Commits GitHub
+          </button>
+          <button
+            v-if="projectGitlabRef"
+            @click="setProjectContentView('gitlabCommits')"
+            :class="['btn', projectContentView === 'gitlabCommits' ? 'btn-primary' : 'btn-secondary']"
+          >
+            🦊 Commits GitLab
           </button>
         </div>
 
@@ -284,6 +295,124 @@
                   <small v-if="!currentSprint" style="color: #999;">(aucun sprint actif)</small>
                 </span>
               </label>
+            </div>
+
+            <div style="margin-bottom: 1rem; padding: 0.75rem; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc;">
+              <div v-if="!projectGithubRef" style="color:#64748b; font-size:0.92rem;">
+                🐙 Aucun dépôt GitHub lié à ce projet. Associez d'abord un dépôt dans les détails du projet.
+              </div>
+              <template v-else>
+              <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem;">
+                <strong>🐙 GitHub : {{ projectGithubRef.owner }}/{{ projectGithubRef.repo }}</strong>
+                <button type="button" class="btn btn-secondary btn-sm" @click="loadGithubCommitsForTicketForm" :disabled="ticketGithubCommitsLoading">
+                  {{ ticketGithubCommitsLoading ? '⏳ Chargement...' : '🔄 Rafraîchir commits' }}
+                </button>
+              </div>
+
+              <div class="form-group" style="margin-bottom: 0.5rem;">
+                <label>Branche des commits (optionnel)</label>
+                <select v-model="ticketGithubBranchInput" @change="loadGithubCommitsForTicketForm">
+                  <option :value="project.githubDefaultBranch || 'main'">{{ ticketGithubCommitsLoading ? 'Chargement des branches...' : `Branche par défaut (${project.githubDefaultBranch || 'main'})` }}</option>
+                  <option v-for="branch in projectGithubBranches" :key="`ticket-github-branch-${branch}`" :value="branch">{{ branch }}</option>
+                </select>
+              </div>
+
+              <div class="form-group" style="margin-bottom: 0.5rem;">
+                <label style="display: inline-flex; align-items: center; gap: 0.5rem;">
+                  <input type="checkbox" v-model="ticketGithub.createBranch" style="width:auto;" />
+                  Créer une branche GitHub à la création du ticket
+                </label>
+              </div>
+
+              <div v-if="ticketGithub.createBranch" class="form-row">
+                <div class="form-group">
+                  <label>Nom de branche (optionnel)</label>
+                  <input v-model="ticketGithub.branchName" type="text" placeholder="Ex: feat/mon-ticket" />
+                </div>
+                <div class="form-group">
+                  <label>Token GitHub (requis)</label>
+                  <input v-model="ticketGithubTokenInput" type="password" placeholder="ghp_..." />
+                </div>
+              </div>
+
+              <div v-if="ticketGithubError" class="alert-inline alert-error" style="margin-top: 0.5rem;">
+                {{ ticketGithubError }}
+              </div>
+
+              <div style="margin-top: 0.5rem; max-height: 180px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff;">
+                <div v-if="ticketGithubCommits.length === 0" style="padding: 0.6rem; color: #64748b; font-size: 0.9rem;">Aucun commit chargé</div>
+                <button
+                  v-for="commit in ticketGithubCommits"
+                  :key="commit.sha"
+                  type="button"
+                  @click="ticketGithub.baseSha = commit.sha"
+                  style="display: block; width: 100%; text-align: left; padding: 0.55rem 0.65rem; border: none; border-bottom: 1px solid #f1f5f9; background: transparent; cursor: pointer;"
+                  :style="ticketGithub.baseSha === commit.sha ? 'background:#eef2ff;' : ''"
+                >
+                  <div style="font-size: 0.88rem; font-weight: 600; color: #1f2937;">{{ commit.message }}</div>
+                  <div style="font-size: 0.78rem; color: #64748b;">{{ commit.sha.slice(0, 7) }} • {{ commit.author }} • {{ formatDate(commit.date) }}</div>
+                </button>
+              </div>
+              </template>
+            </div>
+
+            <div style="margin-bottom: 1rem; padding: 0.75rem; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc;">
+              <div v-if="!projectGitlabRef" style="color:#64748b; font-size:0.92rem;">
+                🦊 Aucun projet GitLab lié à ce projet. Associez-le d'abord dans les détails du projet.
+              </div>
+              <template v-else>
+              <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem;">
+                <strong>🦊 GitLab : {{ projectGitlabRef.projectPath }}</strong>
+                <button type="button" class="btn btn-secondary btn-sm" @click="loadGitlabCommitsForTicketForm" :disabled="ticketGitlabCommitsLoading">
+                  {{ ticketGitlabCommitsLoading ? '⏳ Chargement...' : '🔄 Rafraîchir commits' }}
+                </button>
+              </div>
+
+              <div class="form-group" style="margin-bottom: 0.5rem;">
+                <label>Branche des commits (optionnel)</label>
+                <select v-model="ticketGitlabBranchInput" @change="loadGitlabCommitsForTicketForm">
+                  <option :value="project.gitlabDefaultBranch || 'main'">{{ ticketGitlabCommitsLoading ? 'Chargement des branches...' : `Branche par défaut (${project.gitlabDefaultBranch || 'main'})` }}</option>
+                  <option v-for="branch in projectGitlabBranches" :key="`ticket-gitlab-branch-${branch}`" :value="branch">{{ branch }}</option>
+                </select>
+              </div>
+
+              <div class="form-group" style="margin-bottom: 0.5rem;">
+                <label style="display: inline-flex; align-items: center; gap: 0.5rem;">
+                  <input type="checkbox" v-model="ticketGitlab.createBranch" style="width:auto;" />
+                  Créer une branche GitLab à la création du ticket
+                </label>
+              </div>
+
+              <div v-if="ticketGitlab.createBranch" class="form-row">
+                <div class="form-group">
+                  <label>Nom de branche (optionnel)</label>
+                  <input v-model="ticketGitlab.branchName" type="text" placeholder="Ex: feat/mon-ticket" />
+                </div>
+                <div class="form-group">
+                  <label>Token GitLab (requis, scope `api`)</label>
+                  <input v-model="ticketGitlabTokenInput" type="password" placeholder="glpat-..." />
+                </div>
+              </div>
+
+              <div v-if="ticketGitlabError" class="alert-inline alert-error" style="margin-top: 0.5rem;">
+                {{ ticketGitlabError }}
+              </div>
+
+              <div style="margin-top: 0.5rem; max-height: 180px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff;">
+                <div v-if="ticketGitlabCommits.length === 0" style="padding: 0.6rem; color: #64748b; font-size: 0.9rem;">Aucun commit chargé</div>
+                <button
+                  v-for="commit in ticketGitlabCommits"
+                  :key="`gitlab-ticket-${commit.sha}`"
+                  type="button"
+                  @click="ticketGitlab.baseSha = commit.sha"
+                  style="display: block; width: 100%; text-align: left; padding: 0.55rem 0.65rem; border: none; border-bottom: 1px solid #f1f5f9; background: transparent; cursor: pointer;"
+                  :style="ticketGitlab.baseSha === commit.sha ? 'background:#fff7ed;' : ''"
+                >
+                  <div style="font-size: 0.88rem; font-weight: 600; color: #1f2937;">{{ commit.message }}</div>
+                  <div style="font-size: 0.78rem; color: #64748b;">{{ commit.sha.slice(0, 7) }} • {{ commit.author }} • {{ formatDate(commit.date) }}</div>
+                </button>
+              </div>
+              </template>
             </div>
             
             <!-- Upload de fichiers pour tickets -->
@@ -1104,6 +1233,126 @@
           </div>
         </template>
 
+        <template v-else-if="projectContentView === 'githubCommits'">
+          <div class="section-header">
+            <h3>🐙 Tous les commits du dépôt</h3>
+            <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
+              <button class="btn btn-secondary btn-sm" @click="loadProjectGithubCommits(true)" :disabled="projectGithubCommitsLoading || !projectGithubRef">
+                {{ projectGithubCommitsLoading ? '⏳ Chargement...' : '🔄 Rafraîchir' }}
+              </button>
+              <span v-if="projectGithubCommits.length" class="badge badge-info">{{ projectGithubCommits.length }} commit(s)</span>
+            </div>
+          </div>
+
+          <div v-if="!projectGithubRef" class="alert-inline">
+            ℹ️ Ce projet n'est pas lié à un dépôt GitHub.
+          </div>
+
+          <div v-else style="margin-bottom: 0.75rem; display: grid; grid-template-columns: 1fr 300px; gap: 0.75rem;">
+            <div style="padding: 0.65rem 0.8rem; border: 1px solid #e2e8f0; border-radius: 8px; background:#f8fafc;">
+              <strong>{{ projectGithubRef.owner }}/{{ projectGithubRef.repo }}</strong>
+              <div style="color:#64748b; font-size: 0.85rem; margin-top:0.2rem;">Branche par défaut: {{ project.githubDefaultBranch || 'main' }}</div>
+            </div>
+            <div class="form-group" style="margin:0;">
+              <label>Token GitHub (optionnel)</label>
+              <input v-model="projectGithubTokenInput" type="password" placeholder="ghp_..." />
+              <label style="margin-top:0.45rem; display:block;">Branche à afficher (optionnel)</label>
+              <select v-model="projectGithubBranchInput" @change="loadProjectGithubCommits(true)">
+                <option :value="project.githubDefaultBranch || 'main'">{{ projectGithubBranchesLoading ? 'Chargement des branches...' : `Branche par défaut (${project.githubDefaultBranch || 'main'})` }}</option>
+                <option v-for="branch in projectGithubBranches" :key="`project-github-branch-${branch}`" :value="branch">{{ branch }}</option>
+              </select>
+            </div>
+          </div>
+
+          <div v-if="projectGithubCommitsError" class="alert-inline alert-error">
+            {{ projectGithubCommitsError }}
+          </div>
+
+          <div v-if="!projectGithubCommitsLoading && projectGithubRef && projectGithubCommits.length === 0" style="text-align:center; color:#94a3b8; padding: 1.25rem; border:1px dashed #cbd5e1; border-radius:8px;">
+            Aucun commit à afficher
+          </div>
+
+          <div v-if="projectGithubCommits.length > 0" style="display:flex; flex-direction:column; gap:0.5rem;">
+            <div
+              v-for="commit in projectGithubCommits"
+              :key="`project-commit-${commit.sha}`"
+              style="padding:0.75rem; border:1px solid #e2e8f0; border-radius:8px; background:#fff;"
+            >
+              <div style="display:flex; justify-content:space-between; gap:0.75rem; align-items:flex-start; flex-wrap:wrap;">
+                <div style="min-width: 0;">
+                  <div style="font-weight:600; color:#111827; word-break:break-word;">{{ commit.message }}</div>
+                  <div style="margin-top:0.25rem; color:#64748b; font-size:0.85rem;">
+                    <span>{{ commit.sha.slice(0, 7) }}</span>
+                    <span> • {{ commit.author }}</span>
+                    <span> • {{ formatDate(commit.date) }}</span>
+                  </div>
+                </div>
+                <a :href="commit.htmlUrl" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">🔎 Voir</a>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <template v-else-if="projectContentView === 'gitlabCommits'">
+          <div class="section-header">
+            <h3>🦊 Tous les commits du projet GitLab</h3>
+            <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
+              <button class="btn btn-secondary btn-sm" @click="loadProjectGitlabCommits(true)" :disabled="projectGitlabCommitsLoading || !projectGitlabRef">
+                {{ projectGitlabCommitsLoading ? '⏳ Chargement...' : '🔄 Rafraîchir' }}
+              </button>
+              <span v-if="projectGitlabCommits.length" class="badge badge-info">{{ projectGitlabCommits.length }} commit(s)</span>
+            </div>
+          </div>
+
+          <div v-if="!projectGitlabRef" class="alert-inline">
+            ℹ️ Ce projet n'est pas lié à un projet GitLab.
+          </div>
+
+          <div v-else style="margin-bottom: 0.75rem; display: grid; grid-template-columns: 1fr 300px; gap: 0.75rem;">
+            <div style="padding: 0.65rem 0.8rem; border: 1px solid #e2e8f0; border-radius: 8px; background:#f8fafc;">
+              <strong>{{ projectGitlabRef.projectPath }}</strong>
+              <div style="color:#64748b; font-size: 0.85rem; margin-top:0.2rem;">Branche par défaut: {{ project.gitlabDefaultBranch || 'main' }}</div>
+            </div>
+            <div class="form-group" style="margin:0;">
+              <label>Token GitLab (optionnel, scope `read_repository`/`read_api`)</label>
+              <input v-model="projectGitlabTokenInput" type="password" placeholder="glpat-..." />
+              <label style="margin-top:0.45rem; display:block;">Branche à afficher (optionnel)</label>
+              <select v-model="projectGitlabBranchInput" @change="loadProjectGitlabCommits(true)">
+                <option :value="project.gitlabDefaultBranch || 'main'">{{ projectGitlabBranchesLoading ? 'Chargement des branches...' : `Branche par défaut (${project.gitlabDefaultBranch || 'main'})` }}</option>
+                <option v-for="branch in projectGitlabBranches" :key="`project-gitlab-branch-${branch}`" :value="branch">{{ branch }}</option>
+              </select>
+            </div>
+          </div>
+
+          <div v-if="projectGitlabCommitsError" class="alert-inline alert-error">
+            {{ projectGitlabCommitsError }}
+          </div>
+
+          <div v-if="!projectGitlabCommitsLoading && projectGitlabRef && projectGitlabCommits.length === 0" style="text-align:center; color:#94a3b8; padding: 1.25rem; border:1px dashed #cbd5e1; border-radius:8px;">
+            Aucun commit à afficher
+          </div>
+
+          <div v-if="projectGitlabCommits.length > 0" style="display:flex; flex-direction:column; gap:0.5rem;">
+            <div
+              v-for="commit in projectGitlabCommits"
+              :key="`project-gitlab-commit-${commit.sha}`"
+              style="padding:0.75rem; border:1px solid #e2e8f0; border-radius:8px; background:#fff;"
+            >
+              <div style="display:flex; justify-content:space-between; gap:0.75rem; align-items:flex-start; flex-wrap:wrap;">
+                <div style="min-width: 0;">
+                  <div style="font-weight:600; color:#111827; word-break:break-word;">{{ commit.message }}</div>
+                  <div style="margin-top:0.25rem; color:#64748b; font-size:0.85rem;">
+                    <span>{{ commit.sha.slice(0, 7) }}</span>
+                    <span> • {{ commit.author }}</span>
+                    <span> • {{ formatDate(commit.date) }}</span>
+                  </div>
+                </div>
+                <a :href="commit.htmlUrl" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">🔎 Voir</a>
+              </div>
+            </div>
+          </div>
+        </template>
+
         <!-- Vue Pièces jointes -->
         <template v-else-if="projectContentView === 'attachments'">
           <div class="section-header">
@@ -1202,6 +1451,8 @@ import { db } from '../services/database-new'
 import * as XLSX from 'xlsx'
 import { odooService } from '../services/odoo-new'
 import { auth } from '../services/auth'
+import { parseGithubRepoRef, listGithubCommits, listGithubBranches, createGithubBranch } from '../services/github'
+import { parseGitlabRepoRef, listGitlabCommits, listGitlabBranches, createGitlabBranch } from '../services/gitlab'
 import RichTextEditor from './RichTextEditor.vue'
 import KanbanColumnsEditor from './KanbanColumnsEditor.vue'
 
@@ -1229,6 +1480,20 @@ export default {
       syncingTicketStatuses: false,
       ticketStatusSyncMessage: null,
       taskTimeForm: {},
+      projectGithubTokenInput: localStorage.getItem('github.connector.token') || '',
+      projectGithubBranchInput: '',
+      projectGithubBranches: [],
+      projectGithubBranchesLoading: false,
+      projectGithubCommits: [],
+      projectGithubCommitsLoading: false,
+      projectGithubCommitsError: '',
+      projectGitlabTokenInput: localStorage.getItem('gitlab.connector.token') || '',
+      projectGitlabBranchInput: '',
+      projectGitlabBranches: [],
+      projectGitlabBranchesLoading: false,
+      projectGitlabCommits: [],
+      projectGitlabCommitsLoading: false,
+      projectGitlabCommitsError: '',
       projectContentView: 'tickets',
       selectedGanttSprintId: '',
       ganttWeekStart: '',
@@ -1315,6 +1580,26 @@ export default {
         addToTodo: false,
         addToCurrentSprint: false
       },
+      ticketGithub: {
+        createBranch: true,
+        branchName: '',
+        baseSha: ''
+      },
+      ticketGithubTokenInput: localStorage.getItem('github.connector.token') || '',
+      ticketGithubBranchInput: '',
+      ticketGithubCommits: [],
+      ticketGithubCommitsLoading: false,
+      ticketGithubError: '',
+      ticketGitlab: {
+        createBranch: true,
+        branchName: '',
+        baseSha: ''
+      },
+      ticketGitlabTokenInput: localStorage.getItem('gitlab.connector.token') || '',
+      ticketGitlabBranchInput: '',
+      ticketGitlabCommits: [],
+      ticketGitlabCommitsLoading: false,
+      ticketGitlabError: '',
       showCompletedTickets: false,
       showCompletedOdooTasks: false,
       showCompletedLocalTasks: false
@@ -1331,6 +1616,51 @@ export default {
         return this.project.kanbanColumns.map(col => ({ ...col, folded: Boolean(col.folded) }))
       }
       return this.defaultColumns.map(col => ({ ...col, folded: Boolean(col.folded) }))
+    },
+    projectGithubRef() {
+      const owner = String(this.project?.githubRepoOwner || '').trim()
+      const repo = String(this.project?.githubRepoName || '').trim()
+      if (owner && repo) return { owner, repo }
+
+      const repoUrl = String(this.project?.githubRepoUrl || '').trim()
+      if (!repoUrl) return null
+      try {
+        const ref = parseGithubRepoRef(repoUrl)
+        return { owner: ref.owner, repo: ref.repo }
+      } catch {
+        return null
+      }
+    },
+    projectGitlabRef() {
+      const projectPath = String(this.project?.gitlabProjectPath || '').trim()
+      const projectId = String(this.project?.gitlabProjectId || '').trim()
+      if (projectPath) {
+        const repoUrl = String(this.project?.gitlabRepoUrl || '').trim()
+        if (repoUrl) {
+          try {
+            const parsed = parseGitlabRepoRef(repoUrl)
+            return {
+              host: parsed.host,
+              projectPath,
+              projectId: projectId || undefined
+            }
+          } catch {
+            // fallback ci-dessous
+          }
+        }
+        return {
+          projectPath,
+          projectId: projectId || undefined
+        }
+      }
+
+      const repoUrl = String(this.project?.gitlabRepoUrl || '').trim()
+      if (!repoUrl) return null
+      try {
+        return parseGitlabRepoRef(repoUrl)
+      } catch {
+        return null
+      }
     },
     filteredTickets() {
       const baseTickets = this.showCompletedTickets
@@ -1590,6 +1920,155 @@ export default {
     await this.loadLocalTasks()
   },
   methods: {
+    async setProjectContentView(view) {
+      this.projectContentView = view
+      if (view === 'githubCommits') {
+        await this.loadProjectGithubBranches()
+        await this.loadProjectGithubCommits()
+      }
+      if (view === 'gitlabCommits') {
+        await this.loadProjectGitlabBranches()
+        await this.loadProjectGitlabCommits()
+      }
+    },
+    async loadProjectGithubBranches(force = false) {
+      if (!this.projectGithubRef) {
+        this.projectGithubBranches = []
+        return
+      }
+      if (!force && this.projectGithubBranches.length > 0) return
+      if (this.projectGithubBranchesLoading) return
+
+      this.projectGithubBranchesLoading = true
+      try {
+        const token = String(this.projectGithubTokenInput || '').trim() || undefined
+        const perPage = 100
+        const maxPages = 5
+        const allBranches = []
+
+        for (let page = 1; page <= maxPages; page += 1) {
+          const batch = await listGithubBranches(this.projectGithubRef, token, perPage, page)
+          if (!batch.length) break
+          allBranches.push(...batch.map(branch => branch.name))
+          if (batch.length < perPage) break
+        }
+
+        const uniqueBranches = Array.from(new Set(allBranches))
+        this.projectGithubBranches = uniqueBranches
+      } catch {
+        this.projectGithubBranches = []
+      } finally {
+        this.projectGithubBranchesLoading = false
+      }
+    },
+    async loadProjectGitlabBranches(force = false) {
+      if (!this.projectGitlabRef) {
+        this.projectGitlabBranches = []
+        return
+      }
+      if (!force && this.projectGitlabBranches.length > 0) return
+      if (this.projectGitlabBranchesLoading) return
+
+      this.projectGitlabBranchesLoading = true
+      try {
+        const token = String(this.projectGitlabTokenInput || '').trim() || undefined
+        const perPage = 100
+        const maxPages = 5
+        const allBranches = []
+
+        for (let page = 1; page <= maxPages; page += 1) {
+          const batch = await listGitlabBranches(this.projectGitlabRef, token, perPage, page)
+          if (!batch.length) break
+          allBranches.push(...batch.map(branch => branch.name))
+          if (batch.length < perPage) break
+        }
+
+        const uniqueBranches = Array.from(new Set(allBranches))
+        this.projectGitlabBranches = uniqueBranches
+      } catch {
+        this.projectGitlabBranches = []
+      } finally {
+        this.projectGitlabBranchesLoading = false
+      }
+    },
+    async loadProjectGithubCommits(force = false) {
+      if (!this.projectGithubRef) {
+        this.projectGithubCommits = []
+        this.projectGithubCommitsError = ''
+        return
+      }
+
+      if (!force && this.projectGithubCommits.length > 0) return
+      if (this.projectGithubCommitsLoading) return
+
+      this.projectGithubCommitsLoading = true
+      this.projectGithubCommitsError = ''
+
+      try {
+        await this.loadProjectGithubBranches()
+        const token = String(this.projectGithubTokenInput || '').trim() || undefined
+        const branch = String(this.projectGithubBranchInput || this.project?.githubDefaultBranch || '').trim() || undefined
+        const perPage = 100
+        const maxPages = 20
+        const allCommits = []
+
+        for (let page = 1; page <= maxPages; page += 1) {
+          const batch = await listGithubCommits(this.projectGithubRef, token, perPage, page, branch)
+          if (!batch.length) break
+          allCommits.push(...batch)
+          if (batch.length < perPage) break
+        }
+
+        this.projectGithubCommits = allCommits
+        if (token) {
+          localStorage.setItem('github.connector.token', token)
+        }
+      } catch (error) {
+        this.projectGithubCommits = []
+        this.projectGithubCommitsError = error?.message || 'Impossible de charger les commits GitHub'
+      } finally {
+        this.projectGithubCommitsLoading = false
+      }
+    },
+    async loadProjectGitlabCommits(force = false) {
+      if (!this.projectGitlabRef) {
+        this.projectGitlabCommits = []
+        this.projectGitlabCommitsError = ''
+        return
+      }
+
+      if (!force && this.projectGitlabCommits.length > 0) return
+      if (this.projectGitlabCommitsLoading) return
+
+      this.projectGitlabCommitsLoading = true
+      this.projectGitlabCommitsError = ''
+
+      try {
+        await this.loadProjectGitlabBranches()
+        const token = String(this.projectGitlabTokenInput || '').trim() || undefined
+        const branch = String(this.projectGitlabBranchInput || this.project?.gitlabDefaultBranch || '').trim() || undefined
+        const perPage = 100
+        const maxPages = 20
+        const allCommits = []
+
+        for (let page = 1; page <= maxPages; page += 1) {
+          const batch = await listGitlabCommits(this.projectGitlabRef, token, perPage, page, branch)
+          if (!batch.length) break
+          allCommits.push(...batch)
+          if (batch.length < perPage) break
+        }
+
+        this.projectGitlabCommits = allCommits
+        if (token) {
+          localStorage.setItem('gitlab.connector.token', token)
+        }
+      } catch (error) {
+        this.projectGitlabCommits = []
+        this.projectGitlabCommitsError = error?.message || 'Impossible de charger les commits GitLab'
+      } finally {
+        this.projectGitlabCommitsLoading = false
+      }
+    },
     async loadUsers() {
       this.users = await db.getActiveUsers()
     },
@@ -1686,6 +2165,19 @@ export default {
     async loadProject() {
       const id = parseInt(this.$route.params.id)
       this.project = await db.getProject(id)
+
+      this.projectGithubBranchInput = this.project?.githubDefaultBranch || ''
+      this.projectGitlabBranchInput = this.project?.gitlabDefaultBranch || ''
+
+      if (this.projectContentView === 'githubCommits' && !this.projectGithubRef) {
+        this.projectContentView = 'tickets'
+      }
+      if (this.projectContentView === 'gitlabCommits' && !this.projectGitlabRef) {
+        this.projectContentView = 'tickets'
+      }
+
+      await this.loadProjectGithubBranches(true)
+      await this.loadProjectGitlabBranches(true)
       
       // Charger la config de chiffrage
       if (this.project) {
@@ -1953,6 +2445,78 @@ export default {
         ...this.ticketForm,
         assignedUserId: this.ticketForm.assignedUserId ?? this.currentUserId
       }
+      this.ticketGithubBranchInput = this.project?.githubDefaultBranch || ''
+      this.ticketGitlabBranchInput = this.project?.gitlabDefaultBranch || ''
+      this.loadProjectGithubBranches()
+      this.loadProjectGitlabBranches()
+      this.loadGithubCommitsForTicketForm()
+      this.loadGitlabCommitsForTicketForm()
+    },
+    async loadGithubCommitsForTicketForm() {
+      if (!this.projectGithubRef) {
+        this.ticketGithubCommits = []
+        this.ticketGithubError = ''
+        return
+      }
+
+      this.ticketGithubCommitsLoading = true
+      this.ticketGithubError = ''
+      try {
+        await this.loadProjectGithubBranches()
+        const branch = String(this.ticketGithubBranchInput || this.project?.githubDefaultBranch || '').trim() || undefined
+        const commits = await listGithubCommits(
+          this.projectGithubRef,
+          this.ticketGithubTokenInput || undefined,
+          12,
+          1,
+          branch
+        )
+        this.ticketGithubCommits = commits
+        this.ticketGithub.baseSha = commits[0]?.sha || ''
+      } catch (error) {
+        this.ticketGithubCommits = []
+        this.ticketGithubError = error?.message || 'Impossible de charger les commits GitHub'
+      } finally {
+        this.ticketGithubCommitsLoading = false
+      }
+    },
+    async loadGitlabCommitsForTicketForm() {
+      if (!this.projectGitlabRef) {
+        this.ticketGitlabCommits = []
+        this.ticketGitlabError = ''
+        return
+      }
+
+      this.ticketGitlabCommitsLoading = true
+      this.ticketGitlabError = ''
+      try {
+        await this.loadProjectGitlabBranches()
+        const branch = String(this.ticketGitlabBranchInput || this.project?.gitlabDefaultBranch || '').trim() || undefined
+        const commits = await listGitlabCommits(
+          this.projectGitlabRef,
+          this.ticketGitlabTokenInput || undefined,
+          12,
+          1,
+          branch
+        )
+        this.ticketGitlabCommits = commits
+        this.ticketGitlab.baseSha = commits[0]?.sha || ''
+      } catch (error) {
+        this.ticketGitlabCommits = []
+        this.ticketGitlabError = error?.message || 'Impossible de charger les commits GitLab'
+      } finally {
+        this.ticketGitlabCommitsLoading = false
+      }
+    },
+    buildTicketBranchName(ticketId, ticketTitle) {
+      const base = String(ticketTitle || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '')
+        .slice(0, 40) || 'ticket'
+      return `ticket/${ticketId}-${base}`
     },
     async saveTicket() {
       const sprintId = this.ticketFormOptions.addToCurrentSprint ? (this.currentSprintForSelectedProject?.id || null) : null
@@ -1965,6 +2529,7 @@ export default {
       })
 
       let odooSyncMessage = ''
+      let githubMessage = ''
 
       if (this.project?.odooId && odooService.isConfigured()) {
         try {
@@ -1984,6 +2549,59 @@ export default {
         } catch (syncError) {
           console.error('Erreur de synchronisation ticket vers Odoo:', syncError)
           odooSyncMessage = ' • ⚠️ non synchronisé sur Odoo'
+        }
+      }
+
+      if (this.ticketGithub.createBranch && this.projectGithubRef) {
+        try {
+          const token = String(this.ticketGithubTokenInput || '').trim()
+          if (!token) {
+            throw new Error('Token GitHub requis pour créer la branche')
+          }
+          localStorage.setItem('github.connector.token', token)
+          const localTicketId = Number(createdTicketKey)
+          const branchName = String(this.ticketGithub.branchName || '').trim() || this.buildTicketBranchName(localTicketId, this.ticketForm.title)
+          const branchUrl = await createGithubBranch(
+            this.projectGithubRef,
+            branchName,
+            token,
+            this.ticketGithub.baseSha || undefined,
+            this.project.githubDefaultBranch || undefined
+          )
+          githubMessage = ` • 🌿 branche créée (${branchName})`
+          if (confirm(`✅ Branche GitHub créée. Ouvrir la branche ?\n${branchName}`)) {
+            window.open(branchUrl, '_blank', 'noopener')
+          }
+        } catch (githubError) {
+          console.error('Erreur création branche GitHub:', githubError)
+          githubMessage = ` • ⚠️ branche GitHub non créée (${githubError?.message || 'erreur'})`
+        }
+      }
+
+      let gitlabMessage = ''
+      if (this.ticketGitlab.createBranch && this.projectGitlabRef) {
+        try {
+          const token = String(this.ticketGitlabTokenInput || '').trim()
+          if (!token) {
+            throw new Error('Token GitLab requis pour créer la branche')
+          }
+          localStorage.setItem('gitlab.connector.token', token)
+          const localTicketId = Number(createdTicketKey)
+          const branchName = String(this.ticketGitlab.branchName || '').trim() || this.buildTicketBranchName(localTicketId, this.ticketForm.title)
+          const branchUrl = await createGitlabBranch(
+            this.projectGitlabRef,
+            branchName,
+            token,
+            this.ticketGitlab.baseSha || undefined,
+            this.project.gitlabDefaultBranch || undefined
+          )
+          gitlabMessage = ` • 🦊 branche GitLab créée (${branchName})`
+          if (confirm(`✅ Branche GitLab créée. Ouvrir la branche ?\n${branchName}`)) {
+            window.open(branchUrl, '_blank', 'noopener')
+          }
+        } catch (gitlabError) {
+          console.error('Erreur création branche GitLab:', gitlabError)
+          gitlabMessage = ` • ⚠️ branche GitLab non créée (${gitlabError?.message || 'erreur'})`
         }
       }
 
@@ -2007,7 +2625,7 @@ export default {
       const message = actions.length > 0
         ? `✅ Ticket créé et ${actions.join(', ')}`
         : '✅ Ticket créé'
-      alert(`${message}${odooSyncMessage}`)
+      alert(`${message}${odooSyncMessage}${githubMessage}${gitlabMessage}`)
 
       this.cancelTicketForm()
     },
@@ -2027,6 +2645,20 @@ export default {
         addToTodo: false,
         addToCurrentSprint: false
       }
+      this.ticketGithub = {
+        createBranch: true,
+        branchName: '',
+        baseSha: ''
+      }
+      this.ticketGithubCommits = []
+      this.ticketGithubError = ''
+      this.ticketGitlab = {
+        createBranch: true,
+        branchName: '',
+        baseSha: ''
+      }
+      this.ticketGitlabCommits = []
+      this.ticketGitlabError = ''
     },
     async deleteTicketConfirm(ticket) {
       if (confirm(`Supprimer le ticket "${ticket.title}" ?`)) {
@@ -2067,49 +2699,6 @@ export default {
 
       await db.updateLocalTask(task.id, { sprintId: this.effectiveCurrentSprint.id })
       await this.loadLocalTasks()
-    },
-    async saveDefaultKanbanTemplatePreference() {
-      if (!this.project?.id) return
-      await db.updateProject(this.project.id, {
-        useDefaultKanbanTemplate: this.project.useDefaultKanbanTemplate !== false
-      })
-      await this.loadProject()
-      alert('✅ Préférence Kanban enregistrée')
-    },
-    async applyDefaultKanbanTemplateNow() {
-      if (!this.project?.id) return
-      await this.applyDefaultKanbanTemplateToProject(this.project.id, true)
-      await this.loadProject()
-      alert('✅ Étapes Kanban par défaut appliquées')
-    },
-    async applyDefaultKanbanTemplateToProject(projectId, force = false) {
-      const defaultStages = [
-        { name: 'À faire', sequence: 10, color: '#fff3cd', folded: false },
-        { name: 'En cours', sequence: 20, color: '#cfe2ff', folded: false },
-        { name: 'Terminé', sequence: 30, color: '#d1e7dd', folded: false }
-      ]
-
-      if (!force) {
-        const existing = await db.getStagesByProject(projectId)
-        if ((existing || []).length > 0) return
-      }
-
-      const allStages = await db.getAllKanbanStages()
-      const stageItems = []
-      const compatColumns = []
-
-      for (const stageDef of defaultStages) {
-        const existing = (allStages || []).find(s => String(s.name || '').trim().toLowerCase() === stageDef.name.toLowerCase())
-        const stageId = existing?.id ? Number(existing.id) : Number(await db.addKanbanStage(stageDef))
-        stageItems.push({ stageId, sequence: stageDef.sequence })
-        compatColumns.push({ id: String(stageId), label: stageDef.name, color: stageDef.color })
-      }
-
-      await db.setProjectStages(projectId, stageItems)
-      await db.updateProject(projectId, {
-        useDefaultKanbanTemplate: true,
-        kanbanColumns: compatColumns
-      })
     },
     async addToTodoList(ticket) {
       if (!ticket?.title) return
