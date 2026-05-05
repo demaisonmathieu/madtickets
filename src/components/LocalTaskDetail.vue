@@ -34,6 +34,27 @@
         </div>
       </div>
 
+      <div class="card sync-card">
+        <h3>🔄 Synchronisation Odoo</h3>
+        <div v-if="isSyncedToOdoo" class="sync-status sync-ok">
+          ✅ Cette tâche est synchronisée vers Odoo (ID #{{ task.odooTaskId }}).
+          <span v-if="task.syncedAt">Dernière synchro : {{ formatDateTime(task.syncedAt) }}</span>
+        </div>
+        <div v-else class="sync-status sync-pending">
+          Cette tâche est locale uniquement.
+        </div>
+        <button
+          class="btn btn-primary"
+          :disabled="!canSyncTaskToOdoo || syncingOdoo"
+          @click="syncTaskToOdoo"
+        >
+          {{ syncingOdoo ? 'Synchronisation…' : '☁️ Synchroniser cette tâche vers Odoo' }}
+        </button>
+        <div v-if="!canSyncTaskToOdoo && !isSyncedToOdoo" class="sync-help">
+          {{ syncBlockerMessage }}
+        </div>
+      </div>
+
       <!-- Formulaire d'édition -->
       <div class="card">
         <h3>✏️ Modifier la tâche locale</h3>
@@ -133,6 +154,9 @@
 
 <script>
 import { db } from '../services/database-new'
+import { odooService } from '../services/odoo-new'
+
+const ODOO_ENABLED_KEY = 'app-odoo-enabled'
 
 export default {
   name: 'LocalTaskDetail',
@@ -141,6 +165,8 @@ export default {
       task: null,
       loading: true,
       saving: false,
+      syncingOdoo: false,
+      odooEnabled: true,
       savedMessage: false,
       projects: [],
       form: {
@@ -158,6 +184,35 @@ export default {
     }
   },
   computed: {
+    currentProject() {
+      const projectId = Number(this.form.projectId || this.task?.projectId)
+      if (!projectId) return null
+      return this.projects.find(p => Number(p.id) === projectId) || null
+    },
+    isSyncedToOdoo() {
+      return !!this.task?.odooTaskId
+    },
+    canSyncTaskToOdoo() {
+      return !!(
+        this.task?.id &&
+        !this.task?.odooTaskId &&
+        this.odooEnabled &&
+        this.currentProject?.odooId &&
+        odooService.isConfigured()
+      )
+    },
+    syncBlockerMessage() {
+      if (!this.odooEnabled) {
+        return 'La synchronisation Odoo est désactivée dans Administration.'
+      }
+      if (!this.currentProject?.odooId) {
+        return 'Le projet de cette tâche n\'est pas lié à un projet Odoo.'
+      }
+      if (!odooService.isConfigured()) {
+        return 'La connexion Odoo n\'est pas configurée.'
+      }
+      return 'Synchronisation indisponible pour cette tâche.'
+    },
     projectColumns() {
       if (!this.form.projectId) return [];
       const project = this.projects.find(p => p.id === Number(this.form.projectId));
@@ -183,6 +238,9 @@ export default {
     }
 
     try {
+      const odooEnabledRaw = localStorage.getItem(ODOO_ENABLED_KEY)
+      this.odooEnabled = odooEnabledRaw === null ? true : odooEnabledRaw === 'true'
+
       this.task = await db.getLocalTask(taskId);
       if (this.task) {
         this.form = {
@@ -270,6 +328,54 @@ export default {
       setTimeout(() => {
         this.savedMessage = false;
       }, 3000);
+    },
+    formatDateTime(value) {
+      if (!value) return ''
+      const date = new Date(value)
+      if (Number.isNaN(date.getTime())) return value
+      return date.toLocaleString('fr-FR')
+    },
+    async syncTaskToOdoo() {
+      if (!this.canSyncTaskToOdoo || !this.task) return
+
+      try {
+        this.syncingOdoo = true
+
+        const createdOdooTaskId = await odooService.createProjectTask(
+          Number(this.currentProject.odooId),
+          this.task.title,
+          this.task.description || '',
+          this.task.priority || 'medium'
+        )
+
+        const syncedAt = new Date().toISOString()
+
+        await db.updateLocalTask(this.task.id, {
+          syncMode: 'odoo',
+          odooTaskId: createdOdooTaskId,
+          syncedAt
+        })
+
+        await db.upsertOdooTask({
+          odooId: createdOdooTaskId,
+          projectOdooId: Number(this.currentProject.odooId),
+          localProjectId: Number(this.currentProject.id),
+          projectName: this.currentProject.name,
+          title: this.task.title,
+          description: this.task.description || '',
+          status: this.task.status || 'todo',
+          priority: this.task.priority || 'medium',
+          syncedAt
+        })
+
+        this.task = await db.getLocalTask(this.task.id)
+        alert('✅ Tâche synchronisée vers Odoo.')
+      } catch (err) {
+        console.error('Erreur de synchronisation tâche locale vers Odoo:', err)
+        alert(`❌ ${err?.message || 'Erreur de synchronisation Odoo'}`)
+      } finally {
+        this.syncingOdoo = false
+      }
     },
     goToSprint() {
       if (this.task?.sprintId) {
@@ -405,6 +511,35 @@ export default {
 .linked-title {
   flex: 1;
   font-weight: 500;
+}
+
+.sync-card {
+  border-left: 4px solid #3b82f6;
+}
+
+.sync-status {
+  margin-bottom: 0.75rem;
+  font-size: 0.92rem;
+}
+
+.sync-status span {
+  display: block;
+  color: #6b7280;
+  margin-top: 0.25rem;
+}
+
+.sync-ok {
+  color: #166534;
+}
+
+.sync-pending {
+  color: #374151;
+}
+
+.sync-help {
+  margin-top: 0.65rem;
+  font-size: 0.85rem;
+  color: #6b7280;
 }
 
 @media (max-width: 768px) {

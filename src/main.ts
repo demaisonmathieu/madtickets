@@ -31,6 +31,7 @@ import LocalTaskDetail from './components/LocalTaskDetail.vue'
 import RecetteSharePublic from './components/RecetteSharePublic.vue'
 import RecettesList from './components/RecettesList.vue'
 import Administration from './components/Administration.vue'
+import AIAssistant from './components/AIAssistant.vue'
 import { auth } from './services/auth'
 
 // Enregistrement du Service Worker désactivé en dev
@@ -75,6 +76,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/kanban-stages', component: KanbanStagesConfig },
   { path: '/todos', component: TodoList },
   { path: '/todos/:id', component: TodoDetail },
+  { path: '/ai-assistant', component: AIAssistant },
   { path: '/local-tasks/:id', component: LocalTaskDetail },
   { path: '/tasks', component: OdooTasksList },
   { path: '/tasks/:odooId', component: OdooTaskDetail },

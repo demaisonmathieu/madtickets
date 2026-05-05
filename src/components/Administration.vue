@@ -437,6 +437,124 @@
         <div class="status-row" v-else><span class="status-label">Authentification :</span><span class="status-value">🔑 API Key / Secret</span></div>
       </div>
     </div>
+
+    <!-- ===== ONGLET ASSISTANT IA ===== -->
+    <div v-if="activeTab === 'ai'" class="tab-content">
+      <div class="card">
+        <h3>🤖 Configuration Assistant IA</h3>
+        <p class="card-desc">Configurez le mode local (sans API) ou un provider LLM (Mistral, Google Gemini, GitHub Copilot/Models ou OpenAI compatible).</p>
+
+        <div class="toggle-row" style="margin-bottom: 1rem;">
+          <div>
+            <strong>Activer l'assistant IA</strong>
+            <p class="toggle-hint">Si désactivé, l'écran Assistant IA reste en mode local minimal.</p>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" v-model="aiConfig.enabled" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="form-group">
+          <label>Mode d'analyse</label>
+          <select v-model="aiConfig.strategy">
+            <option value="local">Local (offline, sans API)</option>
+            <option value="llm">LLM (via API serveur)</option>
+          </select>
+        </div>
+
+        <template v-if="aiConfig.strategy === 'llm'">
+          <div class="form-group">
+            <label>Provider</label>
+            <select v-model="aiConfig.provider" @change="onAiProviderChange(true)">
+              <option value="mistral">Mistral</option>
+              <option value="gemini">Google Gemini</option>
+              <option value="github-copilot">GitHub Copilot (GitHub Models)</option>
+              <option value="openai-compatible">OpenAI compatible</option>
+            </select>
+          </div>
+
+          <div class="info-box" style="margin-bottom: 1rem;" v-if="aiConfig.provider === 'mistral'">
+            Astuce Mistral : base URL <strong>https://api.mistral.ai/v1</strong>, modèle conseillé <strong>mistral-small-latest</strong>.
+          </div>
+
+          <div class="info-box" style="margin-bottom: 1rem;" v-if="aiConfig.provider === 'gemini'">
+            Astuce Google Gemini : obtenez votre clé API sur <strong><a href="https://aistudio.google.com/app/apikey" target="_blank">aistudio.google.com</a></strong>, modèle conseillé <strong>gemini-2.0-flash</strong>.
+          </div>
+
+          <div class="info-box" style="margin-bottom: 1rem;" v-if="aiConfig.provider === 'github-copilot'">
+            Astuce GitHub Copilot/Models : utilisez un token GitHub avec accès à <strong><a href="https://github.com/marketplace/models" target="_blank">GitHub Models</a></strong>, base URL <strong>https://models.inference.ai.azure.com</strong>.
+          </div>
+
+          <template v-if="aiConfig.provider !== 'gemini'">
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Base URL API *</label>
+                <input v-model="aiConfig.baseUrl" type="text" :placeholder="aiConfig.provider === 'mistral' ? 'https://api.mistral.ai/v1' : aiConfig.provider === 'github-copilot' ? 'https://models.inference.ai.azure.com' : 'https://api.openai.com/v1'" />
+              </div>
+              <div class="form-group">
+                <label>Model *</label>
+                <input v-model="aiConfig.model" type="text" :placeholder="aiConfig.provider === 'mistral' ? 'mistral-small-latest' : aiConfig.provider === 'github-copilot' ? 'gpt-4o-mini' : 'gpt-4o-mini'" />
+              </div>
+            </div>
+          </template>
+
+          <template v-if="aiConfig.provider === 'gemini'">
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Model *</label>
+                <select v-model="aiConfig.model">
+                  <option value="gemini-2.0-flash">gemini-2.0-flash (⚡ Recommandé)</option>
+                  <option value="gemini-2.0-flash-exp">gemini-2.0-flash-exp</option>
+                  <option value="gemini-1.5-pro">gemini-1.5-pro (Plus puissant)</option>
+                  <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+                  <option value="gemini-1.5-pro-exp-0801">gemini-1.5-pro-exp-0801</option>
+                </select>
+              </div>
+            </div>
+          </template>
+
+          <div class="form-grid">
+            <div class="form-group">
+              <label>API Key *</label>
+              <div class="password-input-wrap">
+                <input v-model="aiConfig.apiKey" :type="showAIApiKey ? 'text' : 'password'" :placeholder="aiConfig.provider === 'mistral' ? 'votre-clé-mistral' : aiConfig.provider === 'gemini' ? 'votre-clé-gemini' : aiConfig.provider === 'github-copilot' ? 'github_pat_... ou ghp_...' : 'sk-...'" />
+                <button type="button" class="eye-btn" @click="showAIApiKey = !showAIApiKey">{{ showAIApiKey ? '🙈' : '👁️' }}</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Temperature</label>
+              <input v-model.number="aiConfig.temperature" type="number" min="0" max="1" step="0.1" />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Prompt système</label>
+            <textarea v-model="aiConfig.systemPrompt" rows="5" placeholder="Instructions globales du modèle"></textarea>
+          </div>
+
+          <div class="test-mail-box">
+            <h4>🧪 Tester l'agent IA</h4>
+            <div class="form-inline">
+              <input v-model="testAiPrompt" type="text" placeholder="Ex: Que dois-je faire en priorité aujourd'hui ?" />
+              <button class="btn btn-secondary" @click="testAiAgent" :disabled="testAiLoading || !testAiPrompt">
+                {{ testAiLoading ? 'Test…' : '🚀 Lancer un test' }}
+              </button>
+            </div>
+            <p v-if="testAiResult" :class="testAiOk ? 'success-msg' : 'error-msg'">
+              {{ testAiResult }}
+            </p>
+          </div>
+        </template>
+
+        <div class="save-row">
+          <button class="btn btn-primary" @click="saveAiConfig" :disabled="aiSaving">
+            {{ aiSaving ? 'Enregistrement…' : '💾 Enregistrer la configuration IA' }}
+          </button>
+          <span v-if="aiSaved" class="success-msg">✅ Configuration IA enregistrée !</span>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -444,8 +562,10 @@
 import { db } from '../services/database-new'
 import { auth } from '../services/auth'
 import { apiFetch } from '../services/api'
+import GeminiService from '../services/gemini'
 
 const MAIL_CONFIG_KEY = 'app-mail-config'
+const AI_CONFIG_KEY = 'app-ai-assistant-config'
 const ODOO_ENABLED_KEY = 'app-odoo-enabled'
 const ODOO_CONFIG_KEY = 'odoo-config'
 
@@ -476,6 +596,47 @@ const DEFAULT_MAIL_CONFIG = {
   imapRejectUnauthorized: true
 }
 
+const DEFAULT_AI_CONFIG = {
+  enabled: true,
+  strategy: 'local', // 'local' | 'llm'
+  provider: 'mistral',
+  baseUrl: 'https://api.mistral.ai/v1',
+  apiKey: '',
+  model: 'mistral-small-latest',
+  temperature: 0.2,
+  systemPrompt: 'Tu es un assistant de priorisation pour une application de gestion de tickets. Réponds en français, de façon concise, actionnable et structurée.'
+}
+
+const AI_PROVIDER_DEFAULTS = {
+  mistral: {
+    baseUrl: 'https://api.mistral.ai/v1',
+    model: 'mistral-small-latest'
+  },
+  gemini: {
+    baseUrl: null,
+    model: 'gemini-2.0-flash'
+  },
+  'github-copilot': {
+    baseUrl: 'https://models.inference.ai.azure.com',
+    model: 'gpt-4o-mini'
+  },
+  'openai-compatible': {
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini'
+  }
+}
+
+const LEGACY_DEFAULT_AI_CONFIG = {
+  enabled: true,
+  strategy: 'local', // 'local' | 'llm'
+  provider: 'openai-compatible',
+  baseUrl: 'https://api.openai.com/v1',
+  apiKey: '',
+  model: 'gpt-4o-mini',
+  temperature: 0.2,
+  systemPrompt: 'Tu es un assistant de priorisation pour une application de gestion de tickets. Réponds en français, de façon concise, actionnable et structurée.'
+}
+
 export default {
   name: 'Administration',
   data() {
@@ -484,7 +645,8 @@ export default {
       tabs: [
         { id: 'users', icon: '👥', label: 'Utilisateurs' },
         { id: 'odoo', icon: '🔄', label: 'Synchronisation Odoo' },
-        { id: 'mail', icon: '📧', label: 'Serveur mail' }
+        { id: 'mail', icon: '📧', label: 'Serveur mail' },
+        { id: 'ai', icon: '🤖', label: 'Assistant IA' }
       ],
 
       // Utilisateurs
@@ -510,7 +672,17 @@ export default {
       testMailOk: false,
       testImapLoading: false,
       testImapResult: '',
-      testImapOk: false
+      testImapOk: false,
+
+      // IA
+      aiConfig: { ...DEFAULT_AI_CONFIG },
+      aiSaving: false,
+      aiSaved: false,
+      showAIApiKey: false,
+      testAiPrompt: '',
+      testAiLoading: false,
+      testAiResult: '',
+      testAiOk: false
     }
   },
   computed: {
@@ -538,6 +710,7 @@ export default {
     await this.loadUsers()
     this.loadOdooSettings()
     this.loadMailConfig()
+    this.loadAiConfig()
   },
   methods: {
     // ===== UTILISATEURS =====
@@ -709,6 +882,123 @@ export default {
         this.testImapResult = `❌ ${error?.message || 'Erreur de connexion IMAP'}`
       } finally {
         this.testImapLoading = false
+      }
+    },
+
+    // ===== ASSISTANT IA =====
+    loadAiConfig() {
+      try {
+        const raw = localStorage.getItem(AI_CONFIG_KEY)
+        if (raw) {
+          const parsed = JSON.parse(raw)
+          this.aiConfig = { ...DEFAULT_AI_CONFIG, ...LEGACY_DEFAULT_AI_CONFIG, ...parsed }
+          this.onAiProviderChange(false)
+        }
+      } catch {
+        this.aiConfig = { ...DEFAULT_AI_CONFIG }
+      }
+    },
+    onAiProviderChange(force = false) {
+      const provider = this.aiConfig.provider in AI_PROVIDER_DEFAULTS
+        ? this.aiConfig.provider
+        : 'mistral'
+      const defaults = AI_PROVIDER_DEFAULTS[provider]
+      const knownBaseUrls = Object.values(AI_PROVIDER_DEFAULTS)
+        .map(cfg => cfg.baseUrl)
+        .filter(Boolean)
+      const knownModels = Object.values(AI_PROVIDER_DEFAULTS)
+        .map(cfg => cfg.model)
+        .filter(Boolean)
+
+      this.aiConfig.provider = provider
+
+      // Pour Gemini, on ne met pas de baseUrl
+      if (provider !== 'gemini') {
+        if (force || !this.aiConfig.baseUrl || knownBaseUrls.includes(this.aiConfig.baseUrl)) {
+          this.aiConfig.baseUrl = defaults.baseUrl
+        }
+      } else {
+        this.aiConfig.baseUrl = null
+      }
+
+      if (force || !this.aiConfig.model || knownModels.includes(this.aiConfig.model)) {
+        this.aiConfig.model = defaults.model
+      }
+    },
+    async saveAiConfig() {
+      this.aiSaving = true
+      this.aiSaved = false
+      try {
+        localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(this.aiConfig))
+        this.aiSaved = true
+        setTimeout(() => { this.aiSaved = false }, 3000)
+      } finally {
+        this.aiSaving = false
+      }
+    },
+    async testAiAgent() {
+      if (!this.testAiPrompt) return
+      this.testAiLoading = true
+      this.testAiResult = ''
+      try {
+        if (this.aiConfig.provider === 'gemini' && this.aiConfig.apiKey && this.aiConfig.model) {
+          // Test direct avec Gemini
+          const geminiService = new GeminiService({
+            apiKey: this.aiConfig.apiKey,
+            model: this.aiConfig.model,
+            temperature: this.aiConfig.temperature
+          })
+
+          const response = await geminiService.generateContent(
+            `Test rapide: ${this.testAiPrompt}`,
+            this.aiConfig.systemPrompt,
+            { maxTokens: 500 }
+          )
+
+          if (response && response.length > 0) {
+            this.testAiOk = true
+            this.testAiResult = `✅ Google Gemini opérationnel (réponse: "${response.substring(0, 100)}…").`
+          } else {
+            this.testAiOk = false
+            this.testAiResult = '⚠️ Gemini a répondu mais la réponse est vide.'
+          }
+        } else {
+          const response = await apiFetch('/ai/suggestions', {
+            method: 'POST',
+            timeoutMs: 30000,
+            body: JSON.stringify({
+              config: this.aiConfig,
+              context: {
+                prompt: this.testAiPrompt,
+                projects: [],
+                tickets: [],
+                todos: [],
+                sprints: [],
+                localSuggestions: [
+                  {
+                    id: 'sample-1',
+                    title: 'Traiter les tickets bloquants',
+                    reason: 'Exemple de contexte local pour guider le modèle.',
+                    source: 'Local',
+                    level: 'high',
+                    levelLabel: 'Haute priorité',
+                    score: 90
+                  }
+                ]
+              }
+            })
+          })
+          const count = Array.isArray(response?.suggestions) ? response.suggestions.length : 0
+          this.testAiOk = true
+          this.testAiResult = count > 0
+            ? `✅ Agent IA opérationnel (${count} suggestion(s) renvoyée(s)).`
+            : '⚠️ Connexion IA OK, mais aucune suggestion exploitable n\'a été renvoyée. Vérifiez le modèle, le prompt système ou ajoutez plus de contexte.'
+        }
+      } catch (error) {
+        this.testAiOk = false
+        this.testAiResult = `❌ ${error?.message || 'Erreur de test IA'}`
+      } finally {
+        this.testAiLoading = false
       }
     }
   }

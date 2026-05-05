@@ -6,6 +6,38 @@
       Une étape peut être partagée entre plusieurs projets.
     </p>
 
+    <!-- Modèles prédéfinis -->
+    <div class="templates-section">
+      <button class="btn-templates-toggle" @click="showTemplates = !showTemplates">
+        🗂️ Modèles prédéfinis <span>{{ showTemplates ? '▲' : '▼' }}</span>
+      </button>
+      <div v-if="showTemplates" class="templates-grid">
+        <div
+          v-for="tpl in KANBAN_TEMPLATES"
+          :key="tpl.id"
+          class="template-card"
+          @click="applyTemplate(tpl)"
+          :title="'Appliquer le modèle : ' + tpl.name"
+        >
+          <div class="template-name">{{ tpl.icon }} {{ tpl.name }}</div>
+          <div class="template-preview">
+            <span
+              v-for="stage in tpl.stages"
+              :key="stage.name"
+              class="template-stage-badge"
+              :style="{ background: stage.color }"
+            >{{ stage.name }}</span>
+          </div>
+          <div class="template-apply-hint">Cliquer pour appliquer</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Confirmation d'application du modèle -->
+    <div v-if="templateApplied" class="template-applied-notice">
+      ✅ Modèle <strong>{{ templateApplied }}</strong> appliqué — pensez à enregistrer.
+    </div>
+
     <!-- Étapes du projet (relationnelles) -->
     <div class="columns-list">
       <div
@@ -115,7 +147,82 @@ export default {
       isDirty: false,
       draggedIndex: null,
       errorMsg: '',
-      successMsg: ''
+      successMsg: '',
+      showTemplates: false,
+      templateApplied: '',
+      KANBAN_TEMPLATES: [
+        {
+          id: 'simple',
+          icon: '✅',
+          name: 'Simple',
+          stages: [
+            { name: 'À faire', color: '#fff3cd', folded: false },
+            { name: 'En cours', color: '#cfe2ff', folded: false },
+            { name: 'Terminé', color: '#d1e7dd', folded: false }
+          ]
+        },
+        {
+          id: 'scrum',
+          icon: '🏃',
+          name: 'Scrum',
+          stages: [
+            { name: 'Backlog', color: '#e9ecef', folded: true },
+            { name: 'À faire', color: '#fff3cd', folded: false },
+            { name: 'En cours', color: '#cfe2ff', folded: false },
+            { name: 'En revue', color: '#f5c6ff', folded: false },
+            { name: 'Terminé', color: '#d1e7dd', folded: false }
+          ]
+        },
+        {
+          id: 'dev',
+          icon: '💻',
+          name: 'Développement',
+          stages: [
+            { name: 'À faire', color: '#fff3cd', folded: false },
+            { name: 'En cours', color: '#cfe2ff', folded: false },
+            { name: 'Code review', color: '#f0d8ff', folded: false },
+            { name: 'En test', color: '#ffe4b5', folded: false },
+            { name: 'En recette', color: '#ffd7aa', folded: false },
+            { name: 'Terminé', color: '#d1e7dd', folded: false }
+          ]
+        },
+        {
+          id: 'support',
+          icon: '🎧',
+          name: 'Support client',
+          stages: [
+            { name: 'Nouveau', color: '#f8d7da', folded: false },
+            { name: 'En traitement', color: '#fff3cd', folded: false },
+            { name: 'Attente client', color: '#cfe2ff', folded: false },
+            { name: 'Résolu', color: '#d1e7dd', folded: false },
+            { name: 'Fermé', color: '#e9ecef', folded: true }
+          ]
+        },
+        {
+          id: 'marketing',
+          icon: '📣',
+          name: 'Marketing',
+          stages: [
+            { name: 'Idée', color: '#fff3cd', folded: false },
+            { name: 'Planification', color: '#ffe4b5', folded: false },
+            { name: 'En production', color: '#cfe2ff', folded: false },
+            { name: 'En validation', color: '#f0d8ff', folded: false },
+            { name: 'Publié', color: '#d1e7dd', folded: false }
+          ]
+        },
+        {
+          id: 'kanban',
+          icon: '📊',
+          name: 'Kanban classique',
+          stages: [
+            { name: 'À faire', color: '#fff3cd', folded: false },
+            { name: 'Analyse', color: '#e0cffc', folded: false },
+            { name: 'En cours', color: '#cfe2ff', folded: false },
+            { name: 'Bloqué', color: '#f8d7da', folded: false },
+            { name: 'Terminé', color: '#d1e7dd', folded: false }
+          ]
+        }
+      ]
     }
   },
   computed: {
@@ -159,6 +266,24 @@ export default {
     },
     markDirty() {
       this.isDirty = true
+      this.emitUpdate()
+    },
+    selectTemplate(tpl) {
+      this.pendingTemplate = tpl
+    },
+    applyTemplate() {
+      if (!this.pendingTemplate) return
+      this.projectStages = this.pendingTemplate.stages.map((s, i) => ({
+        id: null,
+        name: s.name,
+        color: s.color,
+        folded: s.folded || false,
+        sequence: (i + 1) * 10,
+        _isNew: true
+      }))
+      this.isDirty = true
+      this.pendingTemplate = null
+      this.showTemplates = false
       this.emitUpdate()
     },
     emitUpdate() {
@@ -243,6 +368,23 @@ export default {
       } catch (e) {
         this.errorMsg = 'Erreur lors de la sauvegarde : ' + e.message
       }
+    },
+    // === Modèles prédéfinis ===
+    applyTemplate(tpl) {
+      if (!confirm(`Appliquer le modèle "${tpl.name}" ? Les étapes actuelles seront remplacées.`)) return
+      this.projectStages = tpl.stages.map((s, i) => ({
+        id: null,
+        name: s.name,
+        color: s.color,
+        folded: s.folded || false,
+        sequence: (i + 1) * 10,
+        _isNew: true
+      }))
+      this.isDirty = true
+      this.templateApplied = tpl.name
+      this.showTemplates = false
+      setTimeout(() => { this.templateApplied = '' }, 4000)
+      this.emitUpdate()
     },
     // === Drag & drop ===
     onDragStart(event, index) {
@@ -414,6 +556,94 @@ export default {
   color: #856404;
 }
 
+.template-section {
+  margin-bottom: 1.5rem;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.template-header {
+  background: #f8f9fa;
+  padding: 0.75rem 1rem;
+  font-weight: 600;
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  user-select: none;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 0.75rem;
+  padding: 1rem;
+  background: white;
+}
+
+.template-card {
+  border: 2px solid #dee2e6;
+  border-radius: 8px;
+  padding: 0.75rem;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: center;
+}
+.template-card:hover {
+  border-color: #0d6efd;
+  box-shadow: 0 2px 8px rgba(13,110,253,0.15);
+  transform: translateY(-1px);
+}
+.template-card.template-selected {
+  border-color: #0d6efd;
+  background: #e7f1ff;
+}
+
+.template-icon {
+  font-size: 1.6rem;
+  margin-bottom: 0.3rem;
+}
+
+.template-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+}
+
+.template-stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  justify-content: center;
+}
+
+.template-stage-chip {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: #333;
+  white-space: nowrap;
+}
+
+.template-confirm {
+  padding: 0.75rem 1rem;
+  background: #fff3cd;
+  border-top: 1px solid #ffc107;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+}
+
+.btn-sm {
+  padding: 0.25rem 0.65rem;
+  font-size: 0.82rem;
+}
+
 .error-message {
   color: #dc3545;
   font-size: 0.875rem;
@@ -424,6 +654,85 @@ export default {
   color: #198754;
   font-size: 0.875rem;
   margin-top: 0.5rem;
+}
+
+/* ── Modèles prédéfinis ── */
+.templates-section {
+  margin-bottom: 1.25rem;
+}
+
+.btn-templates-toggle {
+  background: #fff;
+  border: 1px solid #6c757d;
+  border-radius: 6px;
+  padding: 0.45rem 1rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: #444;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  transition: background 0.15s;
+}
+.btn-templates-toggle:hover { background: #f0f0f0; }
+
+.templates-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.template-card {
+  background: #fff;
+  border: 2px solid #dee2e6;
+  border-radius: 8px;
+  padding: 0.75rem;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.template-card:hover {
+  border-color: #0d6efd;
+  box-shadow: 0 2px 8px rgba(13,110,253,0.15);
+}
+
+.template-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+  color: #333;
+}
+
+.template-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-bottom: 0.4rem;
+}
+
+.template-stage-badge {
+  display: inline-block;
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.72rem;
+  color: #333;
+  border: 1px solid rgba(0,0,0,0.08);
+}
+
+.template-apply-hint {
+  font-size: 0.75rem;
+  color: #888;
+  margin-top: 0.25rem;
+}
+
+.template-applied-notice {
+  margin-bottom: 1rem;
+  padding: 0.5rem 1rem;
+  background: #d1e7dd;
+  border: 1px solid #a3cfbb;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  color: #0a4c2f;
 }
 </style>
 

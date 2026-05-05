@@ -110,6 +110,7 @@
           >
             <div class="planning-backlog-main">
               <span class="badge" :class="item.type === 'ticket' ? 'badge-info' : 'badge-success'">{{ item.typeLabel }}</span>
+              <span v-if="item.type === 'localTask' && item.lotNumber" class="badge badge-warning">📦 {{ item.lotNumber }}</span>
               <span class="planning-backlog-title">{{ item.title }}</span>
               <span v-if="item.isAlreadyAssigned" class="badge badge-warning">⚠️ Déjà affecté</span>
               <small style="color: #666;">{{ item.projectName }}</small>
@@ -344,7 +345,7 @@
         <div class="item-modal-body">
           <div class="meta-grid">
             <div><strong>Assigné à:</strong> {{ getUserDisplayName(selectedItem.assignedUserId) }}</div>
-            <div><strong>Statut:</strong> {{ getStatusLabel(selectedItem.status) }}</div>
+            <div><strong>Statut:</strong> {{ getStatusLabel(selectedItem.status, selectedItem.projectId) }}</div>
             <div><strong>Priorité:</strong> {{ getPriorityLabel(selectedItem.priority) }}</div>
             <div><strong>Début:</strong> {{ selectedItem.ganttStartDate }}</div>
             <div><strong>Fin:</strong> {{ selectedItem.ganttEndDate }}</div>
@@ -357,6 +358,12 @@
         </div>
 
         <div class="item-modal-footer">
+          <button
+            class="btn btn-secondary"
+            @click="openEditWizard"
+          >
+            ✏️ Éditer (wizard)
+          </button>
           <button
             class="btn btn-secondary"
             @click="prepareDuplicateAssignment"
@@ -387,14 +394,113 @@
         </div>
       </div>
     </div>
+
+    <div v-if="showEditWizardModal && editWizardForm" class="item-modal" @click="closeEditWizard">
+      <div class="item-modal-content" @click.stop>
+        <div class="item-modal-header">
+          <div>
+            <h3>🧙‍♂️ Édition guidée</h3>
+            <small style="color: #666;">{{ editWizardForm.type === 'ticket' ? 'Ticket' : 'Tâche locale' }} • {{ editWizardForm.projectName }}</small>
+          </div>
+          <button class="btn btn-secondary btn-sm" @click="closeEditWizard">✕</button>
+        </div>
+
+        <form class="item-modal-body" @submit.prevent="saveEditWizard">
+          <div class="form-grid">
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label>Titre *</label>
+              <input v-model.trim="editWizardForm.title" required />
+            </div>
+
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label>Description</label>
+              <RichTextEditor v-model="editWizardForm.description" placeholder="Description..." />
+            </div>
+
+            <div class="form-group">
+              <label>Statut</label>
+              <select v-model="editWizardForm.status">
+                <option v-for="option in getWizardStatusOptions(editWizardForm.projectId, editWizardForm.status)" :key="`wizard-status-${option.value}`" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Priorité</label>
+              <select v-model="editWizardForm.priority">
+                <option value="low">Basse</option>
+                <option value="medium">Moyenne</option>
+                <option value="high">Haute</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Assigné à *</label>
+              <select v-model.number="editWizardForm.assignedUserId" required>
+                <option :value="null">Sélectionner un utilisateur</option>
+                <option v-for="user in users" :key="`wizard-user-${user.id}`" :value="Number(user.id)">
+                  {{ user.displayName }} ({{ user.username }})
+                </option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Sprint</label>
+              <select v-model="editWizardForm.sprintId">
+                <option :value="null">Aucun sprint</option>
+                <option v-for="sprint in wizardSprints" :key="`wizard-sprint-${sprint.id}`" :value="Number(sprint.id)">
+                  {{ sprint.name }}
+                </option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Date de début *</label>
+              <input v-model="editWizardForm.startDate" type="date" required />
+            </div>
+
+            <div class="form-group">
+              <label>Heure de début (vue jour)</label>
+              <select v-model.number="editWizardForm.startHour">
+                <option v-for="hour in dayHours" :key="`wizard-hour-${hour}`" :value="hour">
+                  {{ formatHourLabel(hour) }}
+                </option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Temps estimé (heures) *</label>
+              <input v-model.number="editWizardForm.estimatedTime" type="number" min="1" step="0.5" required />
+            </div>
+
+            <div v-if="editWizardForm.type === 'localTask'" class="form-group">
+              <label>Numéro de lot</label>
+              <input v-model.trim="editWizardForm.lotNumber" placeholder="Ex: LOT-001" />
+            </div>
+          </div>
+
+          <div class="item-modal-footer" style="padding: 0; border-top: none; margin-top: 0.75rem;">
+            <button type="button" class="btn btn-secondary" @click="closeEditWizard">Annuler</button>
+            <button type="submit" class="btn btn-primary" :disabled="savingEditWizard">
+              {{ savingEditWizard ? '⏳ Enregistrement...' : '💾 Enregistrer' }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 </template>
 
 <script>
 import { db } from '../services/database-new'
+import RichTextEditor from './RichTextEditor.vue'
 
 export default {
   name: 'UserGanttView',
+  components: {
+    RichTextEditor
+  },
   data() {
     return {
       loading: false,
@@ -427,6 +533,9 @@ export default {
       },
       showItemModal: false,
       selectedItem: null,
+      showEditWizardModal: false,
+      savingEditWizard: false,
+      editWizardForm: null,
       dragState: {
         item: null,
         overDay: '',
@@ -486,6 +595,11 @@ export default {
     },
     quickCreateSprints() {
       const projectId = Number(this.quickCreateForm.projectId)
+      if (!Number.isFinite(projectId) || projectId <= 0) return []
+      return (this.sprints || []).filter(sprint => Number(sprint.projectId) === projectId)
+    },
+    wizardSprints() {
+      const projectId = Number(this.editWizardForm?.projectId)
       if (!Number.isFinite(projectId) || projectId <= 0) return []
       return (this.sprints || []).filter(sprint => Number(sprint.projectId) === projectId)
     },
@@ -880,10 +994,14 @@ export default {
         backgroundImage: `repeating-linear-gradient(to right, #fff, #fff calc(${ratio}% - 1px), #f1f3f5 calc(${ratio}% - 1px), #f1f3f5 ${ratio}%)`
       }
     },
-    getStatusLabel(status) {
+    getRawStatusLabel(status) {
       if (!status) return 'Non défini'
 
-      const normalized = String(status).toLowerCase()
+      const normalized = String(status).trim().toLowerCase()
+      if (normalized === '1') return 'Qualification'
+      if (normalized === '2') return 'En cours'
+      if (normalized === '4') return 'Revue'
+      if (normalized === '5') return 'Terminé'
       if (normalized === 'todo') return 'À faire'
       if (normalized === 'in-progress') return 'En cours'
       if (normalized === 'done') return 'Terminé'
@@ -891,6 +1009,16 @@ export default {
       if (normalized === 'closed') return 'Fermé'
 
       return status
+    },
+    getStatusLabel(status, projectId = null) {
+      if (!status) return 'Non défini'
+
+      const options = this.getProjectStatusOptions(projectId, status)
+      const normalizedStatus = String(status).trim().toLowerCase()
+      const fromProject = options.find(option => String(option.value).trim().toLowerCase() === normalizedStatus)
+      if (fromProject?.label) return fromProject.label
+
+      return this.getRawStatusLabel(status)
     },
     getPriorityLabel(priority) {
       if (priority === 'high') return 'Haute'
@@ -1617,6 +1745,140 @@ export default {
     openProjectFromPopup(projectId) {
       this.closeItemPopup()
       this.$router.push(`/projects/${projectId}`)
+    },
+    getProjectStatusOptions(projectId, currentStatus = '') {
+      const pid = Number(projectId)
+      const project = (this.projects || []).find(p => Number(p.id) === pid)
+      const projectColumns = Array.isArray(project?.kanbanColumns)
+        ? project.kanbanColumns
+            .filter(col => col && col.id)
+            .map(col => ({
+              value: String(col.id),
+              label: String(col.label || col.id)
+            }))
+        : []
+
+      const fallback = [
+        { value: 'todo', label: 'À faire' },
+        { value: 'in-progress', label: 'En cours' },
+        { value: 'done', label: 'Terminé' }
+      ]
+
+      const base = projectColumns.length > 0 ? projectColumns : fallback
+      const normalizedCurrent = String(currentStatus || '').trim()
+      if (!normalizedCurrent) return base
+
+      const hasCurrent = base.some(option => String(option.value).trim().toLowerCase() === normalizedCurrent.toLowerCase())
+      if (hasCurrent) return base
+
+      return [{ value: normalizedCurrent, label: this.getRawStatusLabel(normalizedCurrent) }, ...base]
+    },
+    getWizardStatusOptions(projectId, currentStatus) {
+      return this.getProjectStatusOptions(projectId, currentStatus)
+    },
+    openEditWizard() {
+      const source = this.selectedItem ? this.normalizeItemForPlanning(this.selectedItem) : null
+      if (!source?.id || !source?.type) return
+
+      const projectName = this.getProjectName(source.projectId)
+      const assignmentId = this.selectedItem?.assignmentId || this.getItemAssignments(source)?.[0]?.id || null
+      const currentAssignment = assignmentId
+        ? this.getItemAssignments(source).find(assignment => String(assignment.id) === String(assignmentId))
+        : (this.getItemAssignments(source)[0] || null)
+
+      this.editWizardForm = {
+        id: Number(source.id),
+        type: source.type,
+        projectId: Number(source.projectId),
+        projectName,
+        title: source.title || '',
+        description: source.description || '',
+        status: source.status || 'todo',
+        priority: source.priority || 'medium',
+        assignedUserId: Number(currentAssignment?.assignedUserId || source.assignedUserId || null),
+        sprintId: source.sprintId != null ? Number(source.sprintId) : null,
+        startDate: this.normalizeBusinessDate(currentAssignment?.startDate || source.startDate || source.ganttStartDate || this.toDateOnlyString(new Date())),
+        startHour: Number(currentAssignment?.startHour ?? this.selectedItem?.sourceStartHour ?? 9),
+        estimatedTime: Math.max(1, Number(currentAssignment?.estimatedTime || source.estimatedTime || 1)),
+        lotNumber: source.type === 'localTask' ? (source.lotNumber || '') : '',
+        assignmentId: currentAssignment?.id || assignmentId || null
+      }
+
+      this.showEditWizardModal = true
+    },
+    closeEditWizard() {
+      if (this.savingEditWizard) return
+      this.showEditWizardModal = false
+      this.editWizardForm = null
+    },
+    async saveEditWizard() {
+      if (!this.editWizardForm) return
+
+      const form = {
+        ...this.editWizardForm,
+        title: String(this.editWizardForm.title || '').trim(),
+        description: String(this.editWizardForm.description || '').trim(),
+        status: String(this.editWizardForm.status || '').trim() || 'todo',
+        priority: String(this.editWizardForm.priority || 'medium').trim() || 'medium',
+        assignedUserId: Number(this.editWizardForm.assignedUserId),
+        sprintId: this.editWizardForm.sprintId != null && this.editWizardForm.sprintId !== '' ? Number(this.editWizardForm.sprintId) : null,
+        startDate: this.normalizeBusinessDate(this.editWizardForm.startDate),
+        startHour: Math.max(0, Math.min(23, Number(this.editWizardForm.startHour || 9))),
+        estimatedTime: Math.max(1, Number(this.editWizardForm.estimatedTime || 1)),
+        lotNumber: String(this.editWizardForm.lotNumber || '').trim()
+      }
+
+      if (!form.title || !form.assignedUserId || !form.startDate || form.estimatedTime <= 0) {
+        alert('Merci de renseigner les champs obligatoires (titre, assigné, date, estimation).')
+        return
+      }
+
+      const source = this.selectedItem ? this.normalizeItemForPlanning(this.selectedItem) : null
+      if (!source?.id || !source?.type) {
+        alert('Élément introuvable pour l\'édition.')
+        return
+      }
+
+      this.savingEditWizard = true
+      try {
+        const baseUpdates = {
+          title: form.title,
+          description: form.description,
+          status: form.status,
+          priority: form.priority,
+          sprintId: form.sprintId,
+        }
+
+        if (source.type === 'localTask') {
+          baseUpdates.lotNumber = form.lotNumber || ''
+        }
+
+        await this.updateBaseItem(source, baseUpdates)
+
+        const assignmentPayload = {
+          id: form.assignmentId || this.buildAssignmentId(source),
+          assignedUserId: form.assignedUserId,
+          startDate: form.startDate,
+          estimatedTime: form.estimatedTime,
+          startHour: form.startHour
+        }
+
+        if (form.assignmentId) {
+          await this.updateAssignment(source, form.assignmentId, assignmentPayload)
+        } else {
+          await this.replaceWithSingleAssignment(source, assignmentPayload)
+        }
+
+        this.setItemStartHourForDay({ ...source, assignmentId: assignmentPayload.id }, form.startDate, form.startHour)
+        await this.loadData()
+        this.closeEditWizard()
+        this.closeItemPopup()
+      } catch (error) {
+        console.error('Erreur édition wizard Gantt:', error)
+        alert(`❌ ${error.message || 'Impossible de sauvegarder les modifications'}`)
+      } finally {
+        this.savingEditWizard = false
+      }
     }
   }
 }

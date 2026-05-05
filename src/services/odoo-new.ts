@@ -1313,9 +1313,15 @@ class OdooService {
   }
 
   private mapLocalPriorityToOdoo(priority: 'low' | 'medium' | 'high' | string | undefined): string {
-    // helpdesk.ticket.priority est un champ selection (string)
+    // helpdesk.ticket.priority : 0=Low, 1=Normal, 2=High, 3=Urgent
     if (priority === 'high') return '2';
     if (priority === 'medium') return '1';
+    return '0';
+  }
+
+  private mapLocalPriorityToOdooTask(priority: 'low' | 'medium' | 'high' | string | undefined): string {
+    // project.task.priority : 0=Normal, 1=Important (seulement ces deux valeurs acceptées)
+    if (priority === 'high' || priority === 'medium') return '1';
     return '0';
   }
 
@@ -1750,6 +1756,43 @@ class OdooService {
     }
   }
 
+  async createProjectTask(
+    projectOdooId: number,
+    title: string,
+    description: string = '',
+    priority: 'low' | 'medium' | 'high' | string = 'medium'
+  ): Promise<number> {
+    try {
+      const cleanTitle = String(title || '').trim();
+      if (!cleanTitle) {
+        throw new Error('Le titre de la tâche est requis pour la synchronisation Odoo');
+      }
+
+      const vals: Record<string, any> = {
+        name: cleanTitle,
+        description: description || '',
+        project_id: projectOdooId,
+        priority: this.mapLocalPriorityToOdooTask(priority),
+      };
+
+      const result = await this.callMethod('project.task', 'create', {
+        vals: [vals],
+      });
+
+      const createdId = Array.isArray(result) ? result[0] : result;
+      const numericId = Number(createdId);
+
+      if (!Number.isFinite(numericId) || numericId <= 0) {
+        throw new Error(`ID Odoo invalide retourné après création de tâche: ${JSON.stringify(result)}`);
+      }
+
+      return numericId;
+    } catch (error) {
+      console.error('Erreur lors de la création de la tâche projet dans Odoo:', error);
+      throw error;
+    }
+  }
+
   async getTicketMessages(ticketId: number): Promise<MappedMessage[]> {
     try {
       // Récupérer les messages liés au ticket helpdesk
@@ -2157,6 +2200,53 @@ class OdooService {
     } catch (error) {
       console.error(`Erreur lors de la synchronisation de l'entrée de temps ${timeEntryId}:`, error);
       return false;
+    }
+  }
+
+  /**
+   * Pousse un projet local vers Odoo.
+   * - Si le projet possède déjà un odooId → mise à jour du projet Odoo (write).
+   * - Sinon → création d'un nouveau projet Odoo (create).
+   * Retourne l'odooId du projet Odoo (nouveau ou existant).
+   */
+  async pushProject(localProject: {
+    name: string;
+    description?: string;
+    status?: string;
+    odooId?: number | null;
+  }): Promise<number> {
+    const name = (localProject.name || '').trim();
+    if (!name) {
+      throw new Error('Le nom du projet est requis');
+    }
+
+    const vals: Record<string, any> = {
+      name,
+      description: localProject.description || '',
+      // Dans Odoo, active=false archive le projet
+      active: localProject.status !== 'completed',
+    };
+
+    if (localProject.odooId) {
+      // Mise à jour du projet Odoo existant
+      await this.callMethod('project.project', 'write', {
+        ids: [localProject.odooId],
+        vals,
+      });
+      console.log('[Odoo] Projet mis à jour dans Odoo:', localProject.odooId);
+      return localProject.odooId;
+    } else {
+      // Création d'un nouveau projet dans Odoo
+      const result = await this.callMethod('project.project', 'create', {
+        vals: [vals],
+      });
+      const createdId = Array.isArray(result) ? result[0] : result;
+      const numericId = Number(createdId);
+      if (!Number.isFinite(numericId) || numericId <= 0) {
+        throw new Error(`ID Odoo invalide retourné après création du projet: ${JSON.stringify(result)}`);
+      }
+      console.log('[Odoo] Projet créé dans Odoo avec ID:', numericId);
+      return numericId;
     }
   }
 

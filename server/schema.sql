@@ -144,6 +144,7 @@ CREATE TABLE IF NOT EXISTS local_tasks (
   is_chiffrage BOOLEAN NOT NULL DEFAULT FALSE,
   lot_number TEXT,
   difficulty TEXT,
+  story_points NUMERIC(10,2),
   estimated_time NUMERIC(10,2),
   attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
   gantt_assignments JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -154,6 +155,7 @@ CREATE TABLE IF NOT EXISTS local_tasks (
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS gantt_assignments JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS email_history JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE local_tasks ADD COLUMN IF NOT EXISTS gantt_assignments JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE local_tasks ADD COLUMN IF NOT EXISTS story_points NUMERIC(10,2);
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS use_default_kanban_template BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS client_name TEXT;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS client_email TEXT;

@@ -24,6 +24,25 @@ export interface GitlabCommitItem {
   htmlUrl: string
 }
 
+export interface GitlabCommitFileChange {
+  filename: string
+  oldPath?: string
+  newPath?: string
+  status: string
+  additions?: number
+  deletions?: number
+  patch?: string
+}
+
+export interface GitlabCommitDetails {
+  sha: string
+  message: string
+  author: string
+  date: string
+  htmlUrl: string
+  files: GitlabCommitFileChange[]
+}
+
 export interface GitlabBranchItem {
   name: string
   merged?: boolean
@@ -237,4 +256,36 @@ export async function createGitlabBranch(
   )
 
   return `https://${normalizeGitlabHost(ref.host)}/${ref.projectPath}/-/tree/${encodeURIComponent(safeBranchName)}`
+}
+
+export async function fetchGitlabCommitDetails(
+  ref: GitlabRepoRef,
+  sha: string,
+  token?: string
+): Promise<GitlabCommitDetails> {
+  const safeSha = String(sha || '').trim()
+  if (!safeSha) {
+    throw new Error('SHA GitLab invalide')
+  }
+
+  const projectIdentifier = getProjectIdentifier(ref)
+  const [commit, diff] = await Promise.all([
+    gitlabRequest<any>(ref.host, `/projects/${projectIdentifier}/repository/commits/${encodeURIComponent(safeSha)}`, token, { method: 'GET' }),
+    gitlabRequest<any[]>(ref.host, `/projects/${projectIdentifier}/repository/commits/${encodeURIComponent(safeSha)}/diff`, token, { method: 'GET' })
+  ])
+
+  return {
+    sha: String(commit?.id || safeSha),
+    message: String(commit?.message || commit?.title || '').trim(),
+    author: String(commit?.author_name || 'Unknown'),
+    date: String(commit?.created_at || commit?.committed_date || ''),
+    htmlUrl: `https://${normalizeGitlabHost(ref.host)}/${ref.projectPath}/-/commit/${safeSha}`,
+    files: (diff || []).map((file: any) => ({
+      filename: String(file?.new_path || file?.old_path || ''),
+      oldPath: file?.old_path ? String(file.old_path) : '',
+      newPath: file?.new_path ? String(file.new_path) : '',
+      status: file?.new_file ? 'added' : file?.deleted_file ? 'removed' : file?.renamed_file ? 'renamed' : 'modified',
+      patch: file?.diff ? String(file.diff) : ''
+    }))
+  }
 }

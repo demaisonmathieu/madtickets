@@ -17,6 +17,9 @@ app.use(cors({ origin: frontendOrigin === '*' ? true : frontendOrigin }))
 app.use(express.json({ limit: '50mb' }))
 app.use(express.urlencoded({ limit: '50mb', extended: true }))
 
+const AI_AGENT_CONVERSATIONS = new Map()
+const AI_AGENT_MAX_CONVERSATIONS = 300
+
 const projectFields = {
   id: 'id',
   name: 'name',
@@ -162,6 +165,9 @@ const localTaskFields = {
   sprintId: 'sprint_id',
   recetteId: 'recette_id',
   stageId: 'stage_id',
+  syncMode: 'sync_mode',
+  odooTaskId: 'odoo_task_id',
+  syncedAt: 'synced_at',
   title: 'title',
   description: 'description',
   status: 'status',
@@ -172,6 +178,7 @@ const localTaskFields = {
   isChiffrage: 'is_chiffrage',
   lotNumber: 'lot_number',
   difficulty: 'difficulty',
+  storyPoints: 'story_points',
   estimatedTime: 'estimated_time',
   attachments: 'attachments',
   ganttAssignments: 'gantt_assignments',
@@ -243,6 +250,1336 @@ function escapeHtml(input) {
 
 function textToHtml(input) {
   return escapeHtml(input).replace(/\n/g, '<br>')
+}
+
+function extractJsonFromText(input) {
+  const text = String(input || '').trim()
+  if (!text) return null
+
+  try {
+    return JSON.parse(text)
+  } catch {
+    // ignore
+  }
+
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
+  if (fenced?.[1]) {
+    try {
+      return JSON.parse(fenced[1])
+    } catch {
+      // ignore
+    }
+  }
+
+  const firstBracket = text.indexOf('[')
+  const lastBracket = text.lastIndexOf(']')
+  if (firstBracket >= 0 && lastBracket > firstBracket) {
+    const maybe = text.slice(firstBracket, lastBracket + 1)
+    try {
+      return JSON.parse(maybe)
+    } catch {
+      // ignore
+    }
+  }
+
+  const firstBrace = text.indexOf('{')
+  const lastBrace = text.lastIndexOf('}')
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    const maybe = text.slice(firstBrace, lastBrace + 1)
+    try {
+      return JSON.parse(maybe)
+    } catch {
+      // ignore
+    }
+  }
+
+  return null
+}
+
+function stripHtml(input) {
+  return String(input || '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function truncateText(input, maxLength = 180) {
+  const text = String(input || '').trim()
+  if (!text) return ''
+  if (text.length <= maxLength) return text
+  return `${text.slice(0, Math.max(0, maxLength - 1)).trim()}…`
+}
+
+function buildCompactAiContext(context = {}, mode = 'standard') {
+  const isTiny = mode === 'tiny'
+  const projects = Array.isArray(context.projects) ? context.projects : []
+  const tickets = Array.isArray(context.tickets) ? context.tickets : []
+  const todos = Array.isArray(context.todos) ? context.todos : []
+  const sprints = Array.isArray(context.sprints) ? context.sprints : []
+  const localSuggestions = Array.isArray(context.localSuggestions) ? context.localSuggestions : []
+
+  const limits = isTiny
+    ? { projects: 12, tickets: 40, todos: 30, sprints: 12, suggestions: 8, title: 80, reason: 120, description: 120 }
+    : { projects: 30, tickets: 120, todos: 80, sprints: 30, suggestions: 15, title: 120, reason: 180, description: 220 }
+
+  const projectNames = new Map(
+    projects.map(project => [Number(project?.id), String(project?.name || '').trim()]).filter(([id, name]) => Number.isFinite(id) && name)
+  )
+
+  const compactProjects = projects
+    .slice(0, limits.projects)
+    .map(project => ({
+      id: Number(project?.id),
+      name: truncateText(project?.name, limits.title),
+      status: truncateText(project?.status, 40),
+      favorite: Boolean(project?.isFavorite),
+      chiffrageEnabled: Boolean(project?.chiffrageEnabled)
+    }))
+
+  const compactTickets = tickets
+    .slice(0, limits.tickets)
+    .map(ticket => ({
+      id: Number(ticket?.id),
+      title: truncateText(ticket?.title, limits.title),
+      status: truncateText(ticket?.status, 40),
+      priority: truncateText(ticket?.priority, 20),
+      projectId: Number(ticket?.projectId),
+      projectName: truncateText(projectNames.get(Number(ticket?.projectId)) || '', 80),
+      sprintId: ticket?.sprintId != null ? Number(ticket.sprintId) : null,
+      startDate: ticket?.startDate || null,
+      estimatedTime: Number(ticket?.estimatedTime || 0) || 0,
+      description: truncateText(stripHtml(ticket?.description), limits.description)
+    }))
+
+  const compactTodos = todos
+    .slice(0, limits.todos)
+    .map(todo => ({
+      id: Number(todo?.id),
+      text: truncateText(todo?.text, limits.title),
+      plannedDate: todo?.plannedDate || todo?.date || null,
+      completed: Boolean(todo?.completed)
+    }))
+
+  const compactSprints = sprints
+    .slice(0, limits.sprints)
+    .map(sprint => ({
+      id: Number(sprint?.id),
+      name: truncateText(sprint?.name, limits.title),
+      status: truncateText(sprint?.status, 30),
+      projectId: Number(sprint?.projectId),
+      projectName: truncateText(projectNames.get(Number(sprint?.projectId)) || '', 80),
+      startDate: sprint?.startDate || null,
+      endDate: sprint?.endDate || null,
+      meetingNotesCount: Array.isArray(sprint?.meetingNotes) ? sprint.meetingNotes.length : 0
+    }))
+
+  const compactLocalSuggestions = localSuggestions
+    .slice(0, limits.suggestions)
+    .map(item => ({
+      title: truncateText(item?.title, limits.title),
+      reason: truncateText(item?.reason, limits.reason),
+      source: truncateText(item?.source, 40),
+      projectName: truncateText(item?.projectName, 80),
+      ticketId: Number.isFinite(Number(item?.ticketId)) ? Number(item.ticketId) : undefined,
+      level: truncateText(item?.level, 10),
+      score: Math.max(0, Math.min(100, Number(item?.score || 0)))
+    }))
+
+  return {
+    prompt: truncateText(context.prompt || 'Propose les actions prioritaires', 300),
+    mode,
+    totals: {
+      projects: projects.length,
+      tickets: tickets.length,
+      todos: todos.length,
+      sprints: sprints.length,
+      localSuggestions: localSuggestions.length,
+    },
+    projects: compactProjects,
+    tickets: compactTickets,
+    todos: compactTodos,
+    sprints: compactSprints,
+    localSuggestions: compactLocalSuggestions,
+  }
+}
+
+async function generateAiSuggestions(payload = {}) {
+  const config = payload?.config || {}
+  const context = payload?.context || {}
+
+  const strategy = String(config.strategy || 'local').toLowerCase()
+  if (strategy !== 'llm') {
+    return { provider: 'local', suggestions: Array.isArray(context.localSuggestions) ? context.localSuggestions : [] }
+  }
+
+  const requestedProvider = String(config.provider || 'openai-compatible').trim().toLowerCase()
+  const provider = requestedProvider === 'mistral' ? 'mistral' : 'openai-compatible'
+  const defaultBaseUrl = provider === 'mistral' ? 'https://api.mistral.ai/v1' : 'https://api.openai.com/v1'
+  const defaultModel = provider === 'mistral' ? 'mistral-small-latest' : 'gpt-4o-mini'
+
+  const baseUrl = String(config.baseUrl || defaultBaseUrl).trim().replace(/\/$/, '')
+  const apiKey = String(config.apiKey || '').trim()
+  const model = String(config.model || defaultModel).trim()
+  const temperature = Number(config.temperature ?? 0.2)
+  const systemPrompt = String(config.systemPrompt || '').trim() || 'Tu es un assistant de priorisation.'
+
+  if (!baseUrl || !apiKey || !model) {
+    throw makeError('Configuration IA incomplète (baseUrl, apiKey, model requis)', 400)
+  }
+
+  const maxSuggestions = 25
+  const compactContext = buildCompactAiContext(context, 'standard')
+  const tinyCompactContext = buildCompactAiContext(context, 'tiny')
+
+  const instruction = [
+    'Retourne UNIQUEMENT un JSON valide (sans markdown) :',
+    '[{"title":"...","reason":"...","source":"...","projectName":"...","ticketId":123,"level":"high|medium|low","levelLabel":"...","score":0-100}]',
+    `Maximum ${maxSuggestions} éléments.`,
+    'Aucune clé supplémentaire.'
+  ].join('\n')
+
+  async function callProvider(compactPayload) {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: Number.isFinite(temperature) ? temperature : 0.2,
+        messages: [
+          { role: 'system', content: `${systemPrompt}\n\n${instruction}` },
+          { role: 'user', content: JSON.stringify(compactPayload) }
+        ]
+      })
+    })
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '')
+      const error = makeError(`Erreur provider IA (${response.status}): ${errText || response.statusText}`, 502)
+      error.providerStatus = response.status
+      throw error
+    }
+
+    return response.json()
+  }
+
+  let data
+  try {
+    data = await callProvider(compactContext)
+  } catch (error) {
+    if (Number(error?.providerStatus) === 413) {
+      data = await callProvider(tinyCompactContext)
+    } else {
+      throw error
+    }
+  }
+
+  const rawText = data?.choices?.[0]?.message?.content || ''
+  const parsed = extractJsonFromText(rawText)
+
+  let suggestions = []
+  if (Array.isArray(parsed)) {
+    suggestions = parsed
+  } else if (Array.isArray(parsed?.suggestions)) {
+    suggestions = parsed.suggestions
+  }
+
+  return {
+    provider,
+    model,
+    suggestions: suggestions
+      .filter(item => item && typeof item === 'object')
+      .slice(0, maxSuggestions)
+      .map((item, index) => ({
+        id: item.id || `llm-${Date.now()}-${index}`,
+        title: String(item.title || '').trim() || 'Action recommandée',
+        reason: String(item.reason || '').trim(),
+        source: String(item.source || 'Assistant IA').trim(),
+        projectName: String(item.projectName || '').trim(),
+        ticketId: Number.isFinite(Number(item.ticketId)) ? Number(item.ticketId) : undefined,
+        level: ['high', 'medium', 'low'].includes(String(item.level || '').toLowerCase()) ? String(item.level).toLowerCase() : 'medium',
+        levelLabel: String(item.levelLabel || '').trim() || undefined,
+        score: Math.max(0, Math.min(100, Number(item.score || 60)))
+      }))
+  }
+}
+
+function isPlainObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+}
+
+const AGENT_ENTITY_CONFIG = {
+  projects: {
+    table: 'projects',
+    idColumn: 'id',
+    searchableColumns: ['name', 'description', 'client_name', 'status'],
+    filterColumns: {
+      id: 'id',
+      name: 'name',
+      status: 'status',
+      clientName: 'client_name',
+      assignedUserId: 'assigned_user_id',
+      odooId: 'odoo_id',
+      isFavorite: 'is_favorite',
+    },
+    updatableColumns: {
+      status: 'status',
+      assignedUserId: 'assigned_user_id',
+      isFavorite: 'is_favorite',
+      name: 'name',
+    },
+    selectColumns: ['id', 'name', 'status', 'client_name', 'assigned_user_id', 'odoo_id', 'updated_at']
+  },
+  tickets: {
+    table: 'tickets',
+    idColumn: 'id',
+    searchableColumns: ['title', 'description', 'status', 'priority'],
+    filterColumns: {
+      id: 'id',
+      projectId: 'project_id',
+      sprintId: 'sprint_id',
+      assignedUserId: 'assigned_user_id',
+      status: 'status',
+      priority: 'priority',
+      odooId: 'odoo_id',
+      createdAt: 'created_at',
+      updatedAt: 'updated_at',
+    },
+    updatableColumns: {
+      status: 'status',
+      priority: 'priority',
+      sprintId: 'sprint_id',
+      assignedUserId: 'assigned_user_id',
+    },
+    selectColumns: ['id', 'project_id', 'title', 'status', 'priority', 'assigned_user_id', 'sprint_id', 'odoo_id', 'created_at', 'updated_at']
+  },
+  local_tasks: {
+    table: 'local_tasks',
+    idColumn: 'id',
+    searchableColumns: ['title', 'description', 'status', 'priority'],
+    filterColumns: {
+      id: 'id',
+      projectId: 'project_id',
+      sprintId: 'sprint_id',
+      assignedUserId: 'assigned_user_id',
+      status: 'status',
+      priority: 'priority',
+      syncMode: 'sync_mode',
+      odooTaskId: 'odoo_task_id',
+    },
+    updatableColumns: {
+      status: 'status',
+      priority: 'priority',
+      sprintId: 'sprint_id',
+      assignedUserId: 'assigned_user_id',
+      syncMode: 'sync_mode',
+    },
+    selectColumns: ['id', 'project_id', 'title', 'status', 'priority', 'assigned_user_id', 'sprint_id', 'sync_mode', 'odoo_task_id', 'updated_at']
+  },
+  todos: {
+    table: 'todos',
+    idColumn: 'id',
+    searchableColumns: ['text', 'description'],
+    filterColumns: {
+      id: 'id',
+      completed: 'completed',
+      assignedUserId: 'assigned_user_id',
+      date: 'date',
+      plannedDate: 'planned_date',
+    },
+    updatableColumns: {
+      completed: 'completed',
+      plannedDate: 'planned_date',
+      assignedUserId: 'assigned_user_id',
+      text: 'text',
+    },
+    selectColumns: ['id', 'text', 'planned_date', 'completed', 'assigned_user_id', 'created_at']
+  },
+  sprints: {
+    table: 'sprints',
+    idColumn: 'id',
+    searchableColumns: ['name', 'description', 'status'],
+    filterColumns: {
+      id: 'id',
+      projectId: 'project_id',
+      status: 'status',
+      startDate: 'start_date',
+      endDate: 'end_date',
+    },
+    updatableColumns: {
+      status: 'status',
+      endDate: 'end_date',
+      startDate: 'start_date',
+      name: 'name',
+    },
+    selectColumns: ['id', 'project_id', 'name', 'status', 'start_date', 'end_date', 'updated_at']
+  },
+  time_entries: {
+    table: 'time_entries',
+    idColumn: 'id',
+    searchableColumns: ['description'],
+    filterColumns: {
+      id: 'id',
+      ticketId: 'ticket_id',
+      userId: 'user_id',
+      date: 'date',
+      synced: 'synced',
+      odooId: 'odoo_id',
+    },
+    updatableColumns: {
+      synced: 'synced',
+      date: 'date',
+      description: 'description',
+    },
+    selectColumns: ['id', 'ticket_id', 'duration', 'date', 'synced', 'odoo_id', 'updated_at']
+  }
+}
+
+function normalizeAgentEntity(value) {
+  const raw = String(value || '').trim().toLowerCase()
+  if (AGENT_ENTITY_CONFIG[raw]) return raw
+  if (raw === 'localtasks' || raw === 'local-task' || raw === 'local_tasks') return 'local_tasks'
+  if (raw === 'timeentries' || raw === 'time-entries' || raw === 'time_entries') return 'time_entries'
+  return raw
+}
+
+function buildAgentWhereClause(entityConfig, filters = {}, startIndex = 1) {
+  const parts = []
+  const values = []
+  let idx = startIndex
+
+  const isNumericColumn = (column) => {
+    const col = String(column || '').toLowerCase()
+    return col === 'id' || col.endsWith('_id') || col === 'odoo_id' || col === 'project_odoo_id'
+  }
+
+  const toFiniteNumber = (value) => {
+    const n = Number(value)
+    return Number.isFinite(n) ? n : null
+  }
+
+  const isDateLikeColumn = (column) => {
+    const col = String(column || '').toLowerCase()
+    return col.endsWith('_at') || col.endsWith('_date') || col === 'date'
+  }
+
+  const toComparableValue = (column, value) => {
+    if (isNumericColumn(column)) {
+      return toFiniteNumber(value)
+    }
+
+    if (isDateLikeColumn(column)) {
+      const dt = new Date(value)
+      return Number.isNaN(dt.getTime()) ? null : dt.toISOString()
+    }
+
+    if (typeof value === 'string') {
+      const v = value.trim()
+      return v ? v : null
+    }
+
+    return value
+  }
+
+  if (!isPlainObject(filters)) {
+    return { clause: '', values, nextIndex: idx }
+  }
+
+  for (const [key, rawValue] of Object.entries(filters)) {
+    const column = entityConfig.filterColumns[key]
+    if (!column || rawValue === undefined || rawValue === null || rawValue === '') continue
+
+    const numericColumn = isNumericColumn(column)
+
+    if (isPlainObject(rawValue)) {
+      const opMap = {
+        lt: '<',
+        lte: '<=',
+        gt: '>',
+        gte: '>=',
+        before: '<',
+        after: '>',
+        onOrBefore: '<=',
+        onOrAfter: '>=',
+        from: '>=',
+        to: '<=',
+      }
+
+      for (const [opKey, opValue] of Object.entries(rawValue)) {
+        const sqlOp = opMap[opKey]
+        if (!sqlOp || opValue === undefined || opValue === null || opValue === '') continue
+
+        const comparableValue = toComparableValue(column, opValue)
+        if (comparableValue === null) {
+          parts.push('1=0')
+          continue
+        }
+
+        // PostgreSQL peut comparer directement les strings ISO8601 avec les timestamps
+        // Pas besoin de casting explicite
+        parts.push(`${column} ${sqlOp} $${idx++}`)
+        values.push(comparableValue)
+      }
+
+      continue
+    }
+
+    if (Array.isArray(rawValue)) {
+      if (rawValue.length === 0) continue
+
+      const normalizedArray = numericColumn
+        ? rawValue.map(toFiniteNumber).filter(v => v !== null)
+        : rawValue
+
+      if (normalizedArray.length === 0) {
+        parts.push('1=0')
+        continue
+      }
+
+      const placeholders = normalizedArray.map(() => `$${idx++}`)
+      values.push(...normalizedArray)
+      parts.push(`${column} IN (${placeholders.join(', ')})`)
+      continue
+    }
+
+    if (numericColumn) {
+      const numericValue = toFiniteNumber(rawValue)
+      if (numericValue === null) {
+        parts.push('1=0')
+        continue
+      }
+      parts.push(`${column} = $${idx++}`)
+      values.push(numericValue)
+      continue
+    }
+
+    parts.push(`LOWER(TRIM(CAST(${column} AS TEXT))) = LOWER(TRIM(CAST($${idx++} AS TEXT)))`)
+    values.push(rawValue)
+  }
+
+  return {
+    clause: parts.length ? ` WHERE ${parts.join(' AND ')}` : '',
+    values,
+    nextIndex: idx,
+  }
+}
+
+async function resolveProjectIdsByName(nameLike) {
+  const term = String(nameLike || '').trim()
+  if (!term) return []
+
+  const exact = await query(
+    'SELECT id FROM projects WHERE LOWER(name) = LOWER($1) ORDER BY id DESC LIMIT 200',
+    [term]
+  )
+
+  const exactIds = (exact.rows || [])
+    .map(row => Number(row.id))
+    .filter(id => Number.isFinite(id) && id > 0)
+
+  if (exactIds.length > 0) {
+    return exactIds
+  }
+
+  const result = await query(
+    'SELECT id FROM projects WHERE name ILIKE $1 ORDER BY id DESC LIMIT 200',
+    [`%${term}%`]
+  )
+
+  return (result.rows || [])
+    .map(row => Number(row.id))
+    .filter(id => Number.isFinite(id) && id > 0)
+}
+
+function normalizeForLookup(value = '') {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+}
+
+function sanitizeConversationId(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80)
+  return cleaned
+}
+
+function getConversationMemory(conversationId) {
+  const id = sanitizeConversationId(conversationId)
+  if (!id) return null
+  return AI_AGENT_CONVERSATIONS.get(id) || null
+}
+
+function setConversationMemory(conversationId, memory) {
+  const id = sanitizeConversationId(conversationId)
+  if (!id || !isPlainObject(memory)) return
+
+  AI_AGENT_CONVERSATIONS.set(id, {
+    ...memory,
+    updatedAt: Date.now(),
+  })
+
+  if (AI_AGENT_CONVERSATIONS.size > AI_AGENT_MAX_CONVERSATIONS) {
+    const entries = [...AI_AGENT_CONVERSATIONS.entries()]
+      .sort((a, b) => Number(a?.[1]?.updatedAt || 0) - Number(b?.[1]?.updatedAt || 0))
+    const overflow = AI_AGENT_CONVERSATIONS.size - AI_AGENT_MAX_CONVERSATIONS
+    for (let i = 0; i < overflow; i += 1) {
+      const key = entries[i]?.[0]
+      if (key) AI_AGENT_CONVERSATIONS.delete(key)
+    }
+  }
+}
+
+function applyConversationMemoryFallback(plan = {}, prompt = '', memory = null) {
+  if (!isPlainObject(plan) || !isPlainObject(memory?.lastSearch)) return plan
+
+  const text = String(prompt || '').toLowerCase()
+  
+  // Détecte les mentions explicites de filtres dans le prompt
+  const hasProjectMention = /\b(projet|project)\s+(antelope|.*?)\b|\bantelope\b/i.test(prompt)
+  const hasStatusMention = /\b(statut|status|qualification|en\s+cours|done|termine|resolu)\b/i.test(prompt)
+  const hasFollowUpPronoun = /\blesquels?\b|\bceux\b|\bparmi\s+eux\b|\bet\s+ceux\b|\bet\s+lesquels?\b/.test(text)
+  const hasTemporalPhrase = /plus\s+d['']un\s+an|plus\s+de\s+1\s+an|moins\s+d['']un\s+an|moins\s+de\s+1\s+an|cree|créé|crees|créés|cre|depuis|avant|apres|après/.test(text)
+  
+  // Conditions pour réutiliser le contexte:
+  // 1. Pronoms de follow-up explicites (lesquels, ceux)
+  // 2. Pas de mention de projet/statut ET requête temporelle
+  const isFollowUpQuery = hasFollowUpPronoun || 
+                          (!hasProjectMention && !hasStatusMention && hasTemporalPhrase)
+
+  const search = isPlainObject(plan.search) ? { ...plan.search } : {}
+  const filters = isPlainObject(search.filters) ? { ...search.filters } : {}
+  const prevSearch = memory.lastSearch
+  const prevFilters = isPlainObject(prevSearch.filters) ? prevSearch.filters : {}
+
+  // Réutilise l'entité si elle n'est pas spécifiée
+  if (!search.entity && prevSearch.entity) {
+    search.entity = prevSearch.entity
+  }
+
+  // Réutilise les filtres contextuels si c'est une requête de follow-up
+  // Importante: ne PAS écraser les nouveaux filtres (comme createdAt) avec les anciens
+  if (isFollowUpQuery) {
+    const carryKeys = ['projectId', 'projectName', 'project', 'status', 'assignedUserId', 'sprintId']
+    for (const key of carryKeys) {
+      // Seulement réutiliser si le filtre n'est pas défini dans la requête actuelle
+      if (filters[key] === undefined && prevFilters[key] !== undefined) {
+        filters[key] = prevFilters[key]
+      }
+    }
+  }
+
+  const effectiveEntity = String(search.entity || '').trim()
+  if (!effectiveEntity) return plan
+
+  return {
+    ...plan,
+    intent: String(plan.intent || '').trim() || 'search',
+    search: {
+      entity: effectiveEntity,
+      text: String(search.text || '').trim(),
+      filters,
+      limit: Number.isFinite(Number(search.limit)) ? Number(search.limit) : 200,
+    }
+  }
+}
+
+function normalizeAgentStatusFilter(entity, statusValue) {
+  const supported = entity === 'tickets' || entity === 'local_tasks'
+  if (!supported || statusValue === undefined || statusValue === null || statusValue === '') return statusValue
+
+  const map = {
+    qualification: '1',
+    qualif: '1',
+    'a faire': '1',
+    todo: '1',
+    backlog: '1',
+    'en cours': '2',
+    developpement: '2',
+    development: '2',
+    review: '4',
+    revue: '4',
+    done: '5',
+    termine: '5',
+    closed: '5',
+    resolu: '5',
+    resolved: '5',
+  }
+
+  const mapOne = (raw) => {
+    const key = normalizeForLookup(raw)
+    return map[key] || raw
+  }
+
+  if (Array.isArray(statusValue)) {
+    return statusValue.map(mapOne)
+  }
+
+  return mapOne(statusValue)
+}
+
+async function normalizeAgentFilters(entity, filters = {}) {
+  if (!isPlainObject(filters)) return {}
+
+  const normalized = { ...filters }
+
+  if (Object.prototype.hasOwnProperty.call(normalized, 'status')) {
+    normalized.status = normalizeAgentStatusFilter(entity, normalized.status)
+  }
+
+  const supportsProjectId = ['tickets', 'local_tasks', 'sprints'].includes(entity)
+  if (!supportsProjectId) return normalized
+
+  const projectNameFilter = normalized.projectName
+  const projectIdFilter = normalized.projectId
+  const projectAlias = normalized.project
+
+  // Cas 1: projectName explicite
+  if (projectNameFilter !== undefined && projectNameFilter !== null && projectNameFilter !== '') {
+    const ids = await resolveProjectIdsByName(projectNameFilter)
+    normalized.projectId = ids.length > 0 ? ids : [-1]
+    delete normalized.projectName
+    return normalized
+  }
+
+  // Cas 2: projectId reçu en texte non numérique (ex: "antelope")
+  if (typeof projectIdFilter === 'string' && projectIdFilter.trim() !== '') {
+    const n = Number(projectIdFilter)
+    if (!Number.isFinite(n)) {
+      const ids = await resolveProjectIdsByName(projectIdFilter)
+      normalized.projectId = ids.length > 0 ? ids : [-1]
+      return normalized
+    }
+  }
+
+  // Cas 3: alias "project"
+  if (projectAlias !== undefined && projectAlias !== null && projectAlias !== '') {
+    const n = Number(projectAlias)
+    if (Number.isFinite(n)) {
+      normalized.projectId = n
+    } else {
+      const ids = await resolveProjectIdsByName(projectAlias)
+      normalized.projectId = ids.length > 0 ? ids : [-1]
+    }
+    delete normalized.project
+  }
+
+  return normalized
+}
+
+function applyTemporalPromptFallback(plan = {}, prompt = '') {
+  if (!isPlainObject(plan)) return plan
+
+  const text = String(prompt || '').toLowerCase()
+  const oneYearAgo = new Date()
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1)
+
+  // Toujours chercher une année spécifique, peu importe l'intent
+  const yearMatch = text.match(/\b(20\d{2}|19\d{2})\b/)
+  if (yearMatch) {
+    const year = yearMatch[1]
+    // Créer ou mettre à jour la structure plan.search
+    const search = isPlainObject(plan.search) ? { ...plan.search } : { entity: 'tickets', text: '' }
+    const filters = isPlainObject(search.filters) ? { ...search.filters } : {}
+    
+    filters.createdAt = {
+      from: `${year}-01-01T00:00:00Z`,
+      to: `${year}-12-31T23:59:59Z`
+    }
+    
+    // S'assurer que intent est 'search' si on détecte une année
+    return {
+      ...plan,
+      intent: 'search',
+      search: {
+        ...search,
+        filters
+      }
+    }
+  }
+
+  // Pour les autres expressions temporelles, vérifier l'intent
+  const intent = String(plan.intent || '').toLowerCase()
+  if (intent !== 'search' && intent !== '') return plan
+
+  const search = isPlainObject(plan.search) ? { ...plan.search } : {}
+  const filters = isPlainObject(search.filters) ? { ...search.filters } : {}
+
+  // Ne pas écraser un filtre temporel déjà fourni
+  if (filters.createdAt !== undefined) {
+    return { ...plan, search: { ...search, filters } }
+  }
+
+  if (/plus\s+d['']un\s+an|plus\s+de\s+1\s+an|il\s+y\s+a\s+plus\s+d['']un\s+an/.test(text)) {
+    filters.createdAt = { before: oneYearAgo.toISOString() }
+    return { ...plan, search: { ...search, filters } }
+  }
+
+  if (/moins\s+d['']un\s+an|moins\s+de\s+1\s+an|depuis\s+moins\s+d['']un\s+an/.test(text)) {
+    filters.createdAt = { after: oneYearAgo.toISOString() }
+    return { ...plan, search: { ...search, filters } }
+  }
+
+  return plan
+}
+
+function applySearchPromptFallback(plan = {}, prompt = '') {
+  if (!isPlainObject(plan)) return plan
+
+  const originalPrompt = String(prompt || '').trim()
+  const text = originalPrompt.toLowerCase()
+  const search = isPlainObject(plan.search) ? { ...plan.search } : {}
+  const hasSearchEntity = String(search.entity || '').trim() !== ''
+
+  if (!text && !hasSearchEntity) return plan
+
+  let entity = String(search.entity || '').trim()
+  if (!entity && /\btickets?\b/.test(text)) {
+    entity = 'tickets'
+  } else if (!entity && /\b(taches?|tâches?)\b/.test(text)) {
+    entity = 'local_tasks'
+  } else if (!entity && /\bprojets?\b/.test(text)) {
+    entity = 'projects'
+  }
+
+  if (!entity) return plan
+
+  const clean = (value = '') => String(value)
+    .trim()
+    .replace(/^['"“”‘’`]+|['"“”‘’`]+$/g, '')
+    .replace(/[.,;:!?]+$/g, '')
+    .trim()
+
+  const statusMatch = originalPrompt.match(/(?:au\s+statut|en\s+statut|statut)\s+([^\n,.;:!?]+?)(?=\s+(?:pour|du|de|dans|sur|avec|sans|et|ou)\s+|$)/i)
+  const projectMatch = originalPrompt.match(/projet\s+([^\n,.;:!?]+?)(?=\s+(?:avec|sans|et|ou|depuis|avant|apres|après|au\s+statut|en\s+statut|statut)\b|$)/i)
+  const inlineTicketProjectMatch = originalPrompt.match(/\btickets?\s+([^\n,.;:!?]+?)\s+(?:au\s+statut|en\s+statut|statut)\b/i)
+  const inlineTicketProjectTemporalMatch = originalPrompt.match(/\btickets?\s+([^\n,.;:!?]+?)(?=\s+(?:cr[eé]e?s?|cr[eé]é?s?|de\s+\d{4}|en\s+\d{4}|au\s+statut|en\s+statut|statut)\b)/i)
+
+  const status = clean(statusMatch?.[1] || '')
+  const projectName = clean(projectMatch?.[1] || inlineTicketProjectTemporalMatch?.[1] || inlineTicketProjectMatch?.[1] || '')
+
+  const filters = isPlainObject(search.filters) ? { ...search.filters } : {}
+
+  const hasStructuredPromptFilters = Boolean(status || projectName)
+
+  if (status && ['tickets', 'local_tasks', 'projects', 'sprints'].includes(entity)) {
+    // Le prompt utilisateur prime sur une éventuelle extraction LLM approximative
+    filters.status = normalizeAgentStatusFilter(entity, status)
+  }
+
+  if (!filters.projectId && projectName && ['tickets', 'local_tasks', 'sprints'].includes(entity)) {
+    // Le prompt utilisateur prime sur une éventuelle extraction LLM approximative
+    filters.projectName = projectName
+  }
+
+  const existingText = String(search.text || '').trim()
+  const shouldClearText = hasStructuredPromptFilters && existingText.length > 0
+
+  return {
+    ...plan,
+    intent: String(plan.intent || '').trim() || 'search',
+    answer: String(plan.answer || '').trim() || 'Recherche exécutée.',
+    search: {
+      entity,
+      text: shouldClearText ? '' : existingText,
+      filters,
+      limit: Number.isFinite(Number(search.limit)) ? Number(search.limit) : 200,
+    }
+  }
+}
+
+async function callAgentLlm(payload = {}) {
+  const config = payload?.config || {}
+  const requestedProvider = String(config.provider || 'openai-compatible').trim().toLowerCase()
+  const provider = requestedProvider === 'mistral'
+    ? 'mistral'
+    : requestedProvider === 'gemini'
+      ? 'gemini'
+      : 'openai-compatible'
+  const defaultBaseUrl = provider === 'mistral' ? 'https://api.mistral.ai/v1' : 'https://api.openai.com/v1'
+  const defaultModel = provider === 'mistral'
+    ? 'mistral-small-latest'
+    : provider === 'gemini'
+      ? 'gemini-2.0-flash'
+      : 'gpt-4o-mini'
+
+  const baseUrl = String(config.baseUrl || defaultBaseUrl).trim().replace(/\/$/, '')
+  const apiKey = String(config.apiKey || '').trim()
+  const model = String(config.model || defaultModel).trim()
+  const temperature = Number(config.temperature ?? 0.1)
+
+  if (!apiKey || !model || (provider !== 'gemini' && !baseUrl)) {
+    throw makeError('Configuration IA incomplète (apiKey/model et baseUrl hors Gemini requis)', 400)
+  }
+
+  const schemaSummary = {
+    entities: Object.fromEntries(
+      Object.entries(AGENT_ENTITY_CONFIG).map(([entity, def]) => [
+        entity,
+        {
+          filters: Object.keys(def.filterColumns),
+          updatable: Object.keys(def.updatableColumns),
+          searchable: def.searchableColumns,
+        }
+      ])
+    )
+  }
+
+  const systemPrompt = [
+    'Tu es un agent SQL métier pour une app de gestion de tickets.',
+    'Tu dois répondre UNIQUEMENT avec du JSON valide, sans markdown.',
+    'Schéma opérationnel (entités, filtres, champs modifiables):',
+    JSON.stringify(schemaSummary),
+    'Format JSON de sortie strict:',
+    '{"intent":"kpi|search|mutate|unknown","answer":"texte","kpis":[{"entity":"tickets","metric":"count|sum","field":"duration","filters":{}}],"search":{"entity":"tickets","text":"","filters":{},"limit":200},"mutations":[{"entity":"tickets","action":"update|delete","set":{},"filters":{}}]}',
+    'Règles CRITIQUES:',
+    '- N\'utiliser que les entités/champs fournis.',
+    '- Pour sum, field obligatoire et numérique (ex: duration).',
+    '- Pour les demandes temporelles (ex: "plus d\'un an"), utilise search.filters.createdAt avec opérateurs before/after/from/to.',
+    '- Pour une demande "affiche/list tous", augmente search.limit (jusqu\'à 1000).',
+    '⚠️ MUTATIONS - RÈGLES OBLIGATOIRES:',
+    '  1. Extraire TOUS les filtres du prompt (projet, année, statut, etc.)',
+    '  2. Exemple: "Mets tickets antelope de 2024 en terminé"',
+    '     → mutations:[{"entity":"tickets","action":"update","set":{"status":"5"},"filters":{"projectName":"antelope","createdAt":{"from":"2024-01-01","to":"2024-12-31"}}}]',
+    '  3. JAMAIS de mutation sans filtres (= risque de modifier tous les enregistrements)',
+    '  4. Pour les années: utilise createdAt avec from/to pour l\'année entière',
+    '- Si ambigu, intent=unknown avec une question courte dans answer.',
+  ].join('\n')
+
+  const userPrompt = String(payload?.prompt || '').trim()
+  if (!userPrompt) {
+    throw makeError('Prompt agent IA manquant', 400)
+  }
+
+  let rawText = ''
+
+  if (provider === 'gemini') {
+    const geminiResponse = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: systemPrompt }],
+          },
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: userPrompt }],
+            },
+          ],
+          generationConfig: {
+            temperature: Number.isFinite(temperature) ? temperature : 0.1,
+            maxOutputTokens: 2048,
+          },
+        }),
+      }
+    )
+
+    if (!geminiResponse.ok) {
+      const errText = await geminiResponse.text().catch(() => '')
+      throw makeError(`Erreur provider IA (${geminiResponse.status}): ${errText || geminiResponse.statusText}`, 502)
+    }
+
+    const data = await geminiResponse.json()
+    rawText = String(data?.candidates?.[0]?.content?.parts?.[0]?.text || '')
+  } else {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: Number.isFinite(temperature) ? temperature : 0.1,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+      }),
+    })
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '')
+      throw makeError(`Erreur provider IA (${response.status}): ${errText || response.statusText}`, 502)
+    }
+
+    const data = await response.json()
+    rawText = String(data?.choices?.[0]?.message?.content || '')
+  }
+
+  const parsed = extractJsonFromText(rawText)
+  if (!isPlainObject(parsed)) {
+    throw makeError('Réponse IA invalide: JSON attendu', 502)
+  }
+
+  return parsed
+}
+
+async function runAgentKpis(kpis = []) {
+  if (!Array.isArray(kpis) || kpis.length === 0) return []
+
+  const out = []
+  for (const item of kpis.slice(0, 10)) {
+    const entity = normalizeAgentEntity(item?.entity)
+    const cfg = AGENT_ENTITY_CONFIG[entity]
+    if (!cfg) continue
+
+    const metric = String(item?.metric || 'count').toLowerCase()
+    const fieldRaw = String(item?.field || '').trim()
+    const normalizedFilters = await normalizeAgentFilters(entity, item?.filters || {})
+    const { clause, values } = buildAgentWhereClause(cfg, normalizedFilters, 1)
+
+    if (metric === 'sum') {
+      const allowedNumeric = new Set(['duration', 'estimated_time', 'story_points', 'time_total_minutes'])
+      const dbField = cfg.filterColumns[fieldRaw] || fieldRaw
+      if (!allowedNumeric.has(dbField)) continue
+
+      const sql = `SELECT COALESCE(SUM(${dbField}), 0) AS value FROM ${cfg.table}${clause}`
+      const result = await query(sql, values)
+      out.push({ entity, metric, field: dbField, value: Number(result.rows?.[0]?.value || 0) })
+      continue
+    }
+
+    const sql = `SELECT COUNT(*)::int AS value FROM ${cfg.table}${clause}`
+    const result = await query(sql, values)
+    out.push({ entity, metric: 'count', value: Number(result.rows?.[0]?.value || 0) })
+  }
+
+  return out
+}
+
+async function runAgentSearch(search = {}) {
+  if (!isPlainObject(search) || !search.entity) return { rows: [], total: 0, limit: 0 }
+
+  const entity = normalizeAgentEntity(search.entity)
+  const cfg = AGENT_ENTITY_CONFIG[entity]
+  if (!cfg) return { rows: [], total: 0, limit: 0 }
+
+  const requestedLimit = Number(search.limit)
+  const hasExplicitLimit = Number.isFinite(requestedLimit) && requestedLimit > 0
+  const limit = Math.max(1, Math.min(1000, hasExplicitLimit ? requestedLimit : 200))
+  const normalizedFilters = await normalizeAgentFilters(entity, search.filters || {})
+  const { clause, values, nextIndex } = buildAgentWhereClause(cfg, normalizedFilters, 1)
+
+  let whereClause = clause
+  const text = String(search.text || '').trim()
+  const params = [...values]
+  let idx = nextIndex
+
+  if (text && cfg.searchableColumns.length > 0) {
+    const textPlaceholder = `$${idx++}`
+    const textParts = cfg.searchableColumns.map(col => `${col} ILIKE ${textPlaceholder}`)
+    params.push(`%${text}%`)
+    whereClause += (whereClause ? ' AND ' : ' WHERE ') + `(${textParts.join(' OR ')})`
+  }
+
+  const countSql = `SELECT COUNT(*)::int AS value FROM ${cfg.table}${whereClause}`
+  const countResult = await query(countSql, params)
+  const total = Number(countResult.rows?.[0]?.value || 0)
+
+  const selectCols = cfg.selectColumns.join(', ')
+  const sql = `SELECT ${selectCols} FROM ${cfg.table}${whereClause} ORDER BY ${cfg.idColumn} DESC LIMIT ${limit}`
+  const result = await query(sql, params)
+  return {
+    rows: result.rows || [],
+    total,
+    limit,
+  }
+}
+
+async function runAgentMutations(mutations = [], options = {}) {
+  const allowMutations = options?.allowMutations === true
+  const confirmText = String(options?.confirmText || '').trim()
+  const dryRun = options?.dryRun !== false
+  const maxAffected = 1000  // Limite augmentée pour permettre mutations en masse (ex: 441 tickets d'un projet)
+
+  if (!Array.isArray(mutations) || mutations.length === 0) return { executed: [], requiresConfirmation: false }
+
+  if (!allowMutations || confirmText !== 'CONFIRMER') {
+    return {
+      executed: [],
+      requiresConfirmation: true,
+      message: 'Confirmation requise: renvoyez la requête avec allowMutations=true et confirmText="CONFIRMER".'
+    }
+  }
+
+  const executed = []
+
+  for (const mut of mutations.slice(0, 10)) {
+    const entity = normalizeAgentEntity(mut?.entity)
+    const cfg = AGENT_ENTITY_CONFIG[entity]
+    if (!cfg) continue
+
+    const action = String(mut?.action || '').toLowerCase()
+    const normalizedFilters = await normalizeAgentFilters(entity, mut?.filters || {})
+    const { clause, values } = buildAgentWhereClause(cfg, normalizedFilters, 1)
+    if (!clause) {
+      throw makeError(`Mutation refusée (${entity}): filtres obligatoires`, 400)
+    }
+
+    const countSql = `SELECT COUNT(*)::int AS value FROM ${cfg.table}${clause}`
+    const countResult = await query(countSql, values)
+    const affected = Number(countResult.rows?.[0]?.value || 0)
+
+    if (affected > maxAffected) {
+      throw makeError(`Mutation refusée (${entity}): ${affected} lignes > limite ${maxAffected}`, 400)
+    }
+
+    if (action === 'delete') {
+      if (!dryRun && affected > 0) {
+        await query(`DELETE FROM ${cfg.table}${clause}`, values)
+      }
+      executed.push({ entity, action, affected, dryRun })
+      continue
+    }
+
+    if (action === 'update') {
+      const setPayload = isPlainObject(mut?.set) ? mut.set : {}
+      const setParts = []
+      const setValues = []
+      let idx = 1
+
+      for (const [key, val] of Object.entries(setPayload)) {
+        const col = cfg.updatableColumns[key]
+        if (!col) continue
+        setParts.push(`${col} = $${idx++}`)
+        setValues.push(val)
+      }
+
+      if (setParts.length === 0) {
+        throw makeError(`Mutation update refusée (${entity}): aucun champ modifiable valide`, 400)
+      }
+
+      const shiftedWhere = clause.replace(/\$(\d+)/g, (_, n) => `$${Number(n) + setValues.length}`)
+      const sql = `UPDATE ${cfg.table} SET ${setParts.join(', ')}${shiftedWhere}`
+
+      if (!dryRun && affected > 0) {
+        await query(sql, [...setValues, ...values])
+      }
+
+      executed.push({ entity, action, affected, dryRun, set: Object.keys(setPayload) })
+    }
+  }
+
+  return { executed, requiresConfirmation: false }
+}
+
+function buildRenderAgentInput(prompt = '', agentResult = {}) {
+  const kpis = Array.isArray(agentResult?.kpiResults) ? agentResult.kpiResults.slice(0, 20) : []
+  const searchResults = Array.isArray(agentResult?.searchResults) ? agentResult.searchResults.slice(0, 60) : []
+  const mutationResults = Array.isArray(agentResult?.mutationResults) ? agentResult.mutationResults.slice(0, 20) : []
+
+  return {
+    prompt: String(prompt || '').trim(),
+    intent: String(agentResult?.intent || '').trim(),
+    answer: String(agentResult?.answer || '').trim(),
+    searchTotal: Number(agentResult?.searchTotal || 0),
+    searchLimit: Number(agentResult?.searchLimit || 0),
+    kpis,
+    searchResults,
+    mutationResults,
+    requiresConfirmation: agentResult?.requiresConfirmation === true,
+    confirmationMessage: agentResult?.confirmationMessage || null,
+    dryRun: agentResult?.dryRun !== false,
+  }
+}
+
+async function callRenderAgent(payload = {}, agentResult = {}) {
+  const config = payload?.config || {}
+  const requestedProvider = String(config.provider || 'openai-compatible').trim().toLowerCase()
+  const provider = requestedProvider === 'mistral'
+    ? 'mistral'
+    : requestedProvider === 'gemini'
+      ? 'gemini'
+      : 'openai-compatible'
+  const defaultBaseUrl = provider === 'mistral' ? 'https://api.mistral.ai/v1' : 'https://api.openai.com/v1'
+  const defaultModel = provider === 'mistral'
+    ? 'mistral-small-latest'
+    : provider === 'gemini'
+      ? 'gemini-2.0-flash'
+      : 'gpt-4o-mini'
+
+  const baseUrl = String(config.baseUrl || defaultBaseUrl).trim().replace(/\/$/, '')
+  const apiKey = String(config.apiKey || '').trim()
+  const model = String(config.model || defaultModel).trim()
+  const temperature = Number(config.temperature ?? 0.1)
+
+  if (!apiKey || !model || (provider !== 'gemini' && !baseUrl)) {
+    return null
+  }
+
+  const systemPrompt = [
+    'Tu es un agent de rendu IA pour une application de gestion de tickets.',
+    'Tu reçois un résultat brut (KPI, lignes SQL, mutations) et tu produis un rendu lisible métier.',
+    'Réponds UNIQUEMENT en JSON valide, sans markdown.',
+    'Format strict:',
+    '{"summary":"texte court","highlights":["..."],"nextActions":["..."],"warnings":["..."]}',
+    'Règles:',
+    '- Français clair et orienté action.',
+    '- 3 à 6 highlights maximum.',
+    '- 0 à 5 nextActions maximum.',
+    '- Ne fabrique pas de données absentes.',
+  ].join('\n')
+
+  const renderInput = buildRenderAgentInput(payload?.prompt, agentResult)
+  let rawText = ''
+
+  if (provider === 'gemini') {
+    const geminiResponse = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: systemPrompt }],
+          },
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: JSON.stringify(renderInput) }],
+            },
+          ],
+          generationConfig: {
+            temperature: Number.isFinite(temperature) ? temperature : 0.1,
+            maxOutputTokens: 1024,
+          },
+        }),
+      }
+    )
+
+    if (!geminiResponse.ok) return null
+    const data = await geminiResponse.json().catch(() => ({}))
+    rawText = String(data?.candidates?.[0]?.content?.parts?.[0]?.text || '')
+  } else {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: Number.isFinite(temperature) ? temperature : 0.1,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: JSON.stringify(renderInput) },
+        ],
+      }),
+    })
+
+    if (!response.ok) return null
+    const data = await response.json().catch(() => ({}))
+    rawText = String(data?.choices?.[0]?.message?.content || '')
+  }
+
+  const parsed = extractJsonFromText(rawText)
+  if (!isPlainObject(parsed)) return null
+
+  return {
+    summary: String(parsed.summary || '').trim(),
+    highlights: Array.isArray(parsed.highlights) ? parsed.highlights.map(v => String(v || '').trim()).filter(Boolean).slice(0, 6) : [],
+    nextActions: Array.isArray(parsed.nextActions) ? parsed.nextActions.map(v => String(v || '').trim()).filter(Boolean).slice(0, 5) : [],
+    warnings: Array.isArray(parsed.warnings) ? parsed.warnings.map(v => String(v || '').trim()).filter(Boolean).slice(0, 5) : [],
+  }
+}
+
+async function runAiAgent(payload = {}) {
+  const conversationId = sanitizeConversationId(payload?.conversationId)
+  const conversationMemory = getConversationMemory(conversationId)
+
+  let rawPlan
+  let llmFallbackWarning = ''
+
+  try {
+    rawPlan = await callAgentLlm(payload)
+  } catch (error) {
+    const message = String(error?.message || '')
+    if (message.includes('Réponse IA invalide: JSON attendu')) {
+      llmFallbackWarning = 'Le modèle a renvoyé une réponse non JSON, fallback local appliqué.'
+      rawPlan = {}
+    } else {
+      throw error
+    }
+  }
+
+  const temporalPlan = applyTemporalPromptFallback(rawPlan, payload?.prompt)
+  const fallbackPlan = applySearchPromptFallback(temporalPlan, payload?.prompt)
+  const plan = applyConversationMemoryFallback(fallbackPlan, payload?.prompt, conversationMemory)
+  const intent = String(plan?.intent || 'unknown').toLowerCase()
+
+  const kpiResults = await runAgentKpis(plan?.kpis || [])
+  const searchResult = await runAgentSearch(plan?.search || {})
+  const mutationResult = await runAgentMutations(plan?.mutations || [], {
+    allowMutations: payload?.allowMutations,
+    confirmText: payload?.confirmText,
+    dryRun: payload?.dryRun,
+  })
+
+  const baseResult = {
+    intent,
+    answer: String(plan?.answer || '').trim() || (llmFallbackWarning || 'Analyse terminée.'),
+    plan,
+    kpiResults,
+    searchResults: searchResult.rows,
+    searchTotal: searchResult.total,
+    searchLimit: searchResult.limit,
+    mutationResults: mutationResult.executed || [],
+    requiresConfirmation: mutationResult.requiresConfirmation === true,
+    confirmationMessage: mutationResult.message || null,
+    dryRun: payload?.dryRun !== false,
+  }
+
+  if (conversationId) {
+    // Sauvegarder le contexte de recherche pour les follow-ups
+    const planSearch = isPlainObject(plan?.search) ? plan.search : null
+    if (planSearch && String(planSearch.entity || '').trim()) {
+      setConversationMemory(conversationId, {
+        lastSearch: {
+          entity: String(planSearch.entity || '').trim(),
+          filters: isPlainObject(planSearch.filters) ? planSearch.filters : {},
+          text: String(planSearch.text || '').trim(),
+        }
+      })
+    }
+    
+    // IMPORTANT: Aussi sauvegarder les filtres des mutations pour que les follow-ups puissent les réutiliser
+    // Exemple: "Mets tickets antelope de 2024 en terminé" → conserve {projectName: "antelope", createdAt: {...}}
+    const mutations = Array.isArray(plan?.mutations) ? plan.mutations : []
+    if (mutations.length > 0) {
+      const firstMutation = mutations[0]
+      const entity = String(firstMutation?.entity || '').trim()
+      if (entity && isPlainObject(firstMutation?.filters)) {
+        setConversationMemory(conversationId, {
+          lastSearch: {
+            entity,
+            filters: firstMutation.filters,
+            text: '',
+          }
+        })
+      }
+    }
+  }
+
+  const shouldRender = payload?.renderMode !== 'off'
+  const rendering = shouldRender ? await callRenderAgent(payload, baseResult).catch(() => null) : null
+
+  return {
+    ...baseResult,
+    rendering,
+    conversationId: conversationId || null,
+  }
 }
 
 function buildImapClientConfig(config = {}) {
@@ -830,6 +2167,9 @@ function mapLocalTask(row) {
     sprintId: row.sprint_id ? Number(row.sprint_id) : null,
     recetteId: row.recette_id ? Number(row.recette_id) : null,
     stageId: row.stage_id ? Number(row.stage_id) : null,
+    syncMode: row.sync_mode || 'local',
+    odooTaskId: row.odoo_task_id ? Number(row.odoo_task_id) : null,
+    syncedAt: row.synced_at || null,
     title: row.title,
     description: row.description,
     status: row.status,
@@ -840,6 +2180,7 @@ function mapLocalTask(row) {
     isChiffrage: row.is_chiffrage,
     lotNumber: row.lot_number,
     difficulty: row.difficulty,
+    storyPoints: row.story_points !== null ? Number(row.story_points) : null,
     estimatedTime: row.estimated_time !== null ? Number(row.estimated_time) : null,
     attachments: row.attachments || [],
     ganttAssignments: row.gantt_assignments || [],
@@ -2203,6 +3544,22 @@ app.post('/api/admin/imap/messages', async (req, res, next) => {
   }
 })
 
+app.post('/api/ai/suggestions', async (req, res, next) => {
+  try {
+    res.json(await generateAiSuggestions(req.body || {}))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/ai/agent', async (req, res, next) => {
+  try {
+    res.json(await runAiAgent(req.body || {}))
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.post('/api/rpc', async (req, res, next) => {
   try {
     const { method, params = [] } = req.body || {}
@@ -2316,11 +3673,16 @@ async function ensureProjectExtraColumns() {
   await query(`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS recette_id BIGINT REFERENCES recettes(id) ON DELETE SET NULL`)
   await query(`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS email_history JSONB NOT NULL DEFAULT '[]'::jsonb`)
   await query(`ALTER TABLE local_tasks ADD COLUMN IF NOT EXISTS recette_id BIGINT REFERENCES recettes(id) ON DELETE SET NULL`)
+  await query(`ALTER TABLE local_tasks ADD COLUMN IF NOT EXISTS sync_mode TEXT NOT NULL DEFAULT 'local'`)
+  await query(`ALTER TABLE local_tasks ADD COLUMN IF NOT EXISTS odoo_task_id BIGINT`)
+  await query(`ALTER TABLE local_tasks ADD COLUMN IF NOT EXISTS synced_at TIMESTAMPTZ`)
+  await query(`ALTER TABLE local_tasks ADD COLUMN IF NOT EXISTS story_points NUMERIC(10,2)`)
   await query(`CREATE INDEX IF NOT EXISTS idx_recettes_project_id ON recettes(project_id)`)
   await query(`CREATE INDEX IF NOT EXISTS idx_recettes_sprint_id ON recettes(sprint_id)`)
   await query(`CREATE INDEX IF NOT EXISTS idx_recettes_share_token ON recettes(share_token)`)
   await query(`CREATE INDEX IF NOT EXISTS idx_tickets_recette_id ON tickets(recette_id)`)
   await query(`CREATE INDEX IF NOT EXISTS idx_local_tasks_recette_id ON local_tasks(recette_id)`)
+  await query(`CREATE INDEX IF NOT EXISTS idx_local_tasks_odoo_task_id ON local_tasks(odoo_task_id)`)
   await query(`
     CREATE TABLE IF NOT EXISTS user_menu_preferences (
       user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

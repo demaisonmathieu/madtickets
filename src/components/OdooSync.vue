@@ -238,6 +238,38 @@
       </div>
     </div>
 
+    <!-- Export vers Odoo -->
+    <div v-if="isConfigured" class="card">
+      <h3>⬆️ Exporter un projet vers Odoo</h3>
+      <p style="color: #666; margin-bottom: 1rem;">
+        Poussez un projet local vers Odoo. Si le projet possède déjà un identifiant Odoo, il sera mis à jour ; sinon un nouveau projet sera créé.
+      </p>
+
+      <div class="sync-scope-actions" style="align-items: flex-end; gap: 1rem; flex-wrap: wrap;">
+        <div class="form-group" style="margin: 0; flex: 1; min-width: 220px;">
+          <label>Projet local à exporter</label>
+          <select v-model="pushProjectId">
+            <option value="">-- Choisir un projet --</option>
+            <option v-for="project in allLocalProjects" :key="project.id" :value="String(project.id)">
+              {{ project.name }}{{ project.odooId ? ' (déjà lié · ID Odoo ' + project.odooId + ')' : ' (nouveau)' }}
+            </option>
+          </select>
+        </div>
+        <button
+          @click="pushProjectToOdoo"
+          class="btn btn-primary"
+          :disabled="pushing || !pushProjectId"
+          style="white-space: nowrap;"
+        >
+          {{ pushing ? '⏳ Export...' : '⬆️ Exporter vers Odoo' }}
+        </button>
+      </div>
+
+      <div v-if="pushStatus" class="status-message" :class="pushStatus.type" style="margin-top: 1rem;">
+        {{ pushStatus.message }}
+      </div>
+    </div>
+
     <!-- Statistiques -->
     <div v-if="stats" class="card">
       <h3>📊 Statistiques de synchronisation</h3>
@@ -293,7 +325,12 @@ export default {
       currentOrigin: window.location.origin,
       timeEntriesProgress: null,
       localProjectsWithOdoo: [],
-      selectedProjectId: ''
+      selectedProjectId: '',
+      // Export vers Odoo
+      allLocalProjects: [],
+      pushProjectId: '',
+      pushing: false,
+      pushStatus: null
     }
   },
   mounted() {
@@ -304,6 +341,7 @@ export default {
       this.config.url = this.recommendedProxyUrl
     }
     this.loadLocalProjectsWithOdoo()
+    this.loadAllLocalProjects()
   },
   methods: {
     applyRecommendedProxyUrl() {
@@ -329,6 +367,14 @@ export default {
         console.error('[Sync] Erreur chargement projets locaux:', error)
         this.localProjectsWithOdoo = []
         this.selectedProjectId = ''
+      }
+    },
+    async loadAllLocalProjects() {
+      try {
+        this.allLocalProjects = await db.getAllProjects()
+      } catch (error) {
+        console.error('[Sync] Erreur chargement de tous les projets:', error)
+        this.allLocalProjects = []
       }
     },
     getSelectedProject() {
@@ -794,6 +840,47 @@ export default {
         projects: existing.projects + projects,
         tasks: existing.tasks + tasks,
         lastSync: new Date().toLocaleString('fr-FR')
+      }
+    },
+    async pushProjectToOdoo() {
+      if (!this.pushProjectId) return
+      this.pushing = true
+      this.pushStatus = null
+
+      try {
+        const project = this.allLocalProjects.find(p => p.id === Number(this.pushProjectId))
+        if (!project) throw new Error('Projet introuvable')
+
+        const odooId = await odooService.pushProject({
+          name: project.name,
+          description: project.description || '',
+          status: project.status,
+          odooId: project.odooId || null
+        })
+
+        const wasNew = !project.odooId
+
+        // Sauvegarder l'odooId dans la base locale si nouvelle création
+        if (wasNew) {
+          await db.updateProject(project.id, { odooId })
+          await this.loadAllLocalProjects()
+          await this.loadLocalProjectsWithOdoo()
+        }
+
+        this.pushStatus = {
+          type: 'success',
+          message: wasNew
+            ? `✅ Projet "${project.name}" créé dans Odoo (ID ${odooId})`
+            : `✅ Projet "${project.name}" mis à jour dans Odoo (ID ${odooId})`
+        }
+      } catch (error) {
+        console.error('[Push] Erreur:', error)
+        this.pushStatus = {
+          type: 'error',
+          message: `❌ Erreur : ${error.message}`
+        }
+      } finally {
+        this.pushing = false
       }
     }
   }

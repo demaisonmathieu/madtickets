@@ -69,6 +69,13 @@
           <p style="color: #666; margin-bottom: 1rem;">
             Activez le chiffrage pour ce projet afin de suivre les estimations et coûts des tâches.
           </p>
+
+          <div style="margin-bottom: 1rem; padding: 0.75rem 1rem; background: #e8f4ff; border: 1px solid #b6dcff; border-radius: 6px; color: #0f4c81;">
+            <strong>🃏 Mode Agile Scrum Planning Poker activé</strong><br>
+            Les estimations de chiffrage utilisent désormais les Story Points Fibonacci :
+            <strong>0.5, 1, 2, 3, 5, 8, 13, 21</strong>.
+            Les heures sont calculées automatiquement à partir des Story Points.
+          </div>
           
           <div class="form-group">
             <label style="display: flex; align-items: center; gap: 0.5rem;">
@@ -125,22 +132,22 @@
             🎫 Tickets
           </button>
           <button
-            @click="projectContentView = 'odooTasks'"
-            :class="['btn', projectContentView === 'odooTasks' ? 'btn-primary' : 'btn-secondary']"
+            @click="projectContentView = 'tasks'"
+            :class="['btn', projectContentView === 'tasks' ? 'btn-primary' : 'btn-secondary']"
           >
-            🧩 Tâches Odoo
-          </button>
-          <button
-            @click="projectContentView = 'localTasks'"
-            :class="['btn', projectContentView === 'localTasks' ? 'btn-primary' : 'btn-secondary']"
-          >
-            ✅ Tâches Locales
+            ✅ Tâches
           </button>
           <button
             @click="projectContentView = 'gantt'"
             :class="['btn', projectContentView === 'gantt' ? 'btn-primary' : 'btn-secondary']"
           >
             🗓️ Gantt
+          </button>
+          <button
+            @click="projectContentView = 'roadmap'"
+            :class="['btn', projectContentView === 'roadmap' ? 'btn-primary' : 'btn-secondary']"
+          >
+            🧭 Roadmap
           </button>
           <button
             @click="projectContentView = 'attachments'"
@@ -679,9 +686,9 @@
           </div>
         </template>
 
-        <template v-else-if="projectContentView === 'localTasks'">
+        <template v-else-if="projectContentView === 'tasks'">
           <div class="section-header">
-            <h3>✅ Tâches Locales du projet</h3>
+            <h3>✅ Tâches du projet</h3>
             <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
               <div class="view-toggle" style="margin-right: 0.25rem;">
                 <button
@@ -699,8 +706,20 @@
               </div>
               <label style="display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; font-size: 0.875rem;">
                 <input type="checkbox" v-model="showCompletedLocalTasks" style="width: auto;" />
-                <span>Afficher terminés</span>
+                <span>Afficher tâches locales terminées</span>
               </label>
+              <label style="display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; font-size: 0.875rem;">
+                <input type="checkbox" v-model="showCompletedOdooTasks" style="width: auto;" />
+                <span>Afficher tâches Odoo terminées</span>
+              </label>
+              <button
+                v-if="project?.odooId && odooConfigured"
+                @click="syncOdooTasksForProject"
+                class="btn btn-secondary btn-sm"
+                :disabled="loadingOdooTasks"
+              >
+                {{ loadingOdooTasks ? '⏳ Synchronisation...' : '🔄 Synchroniser Odoo' }}
+              </button>
               <template v-if="localTaskSelectMode && selectedLocalTaskIds.length > 0">
                 <select v-model="bulkLocalTaskStatus" style="padding: 0.4rem 0.6rem; border-radius: 4px; border: 1px solid #ccc; font-size: 0.875rem;">
                   <option value="">À faire ou...</option>
@@ -724,6 +743,53 @@
             </div>
           </div>
 
+          <div v-if="project?.odooId" style="margin-bottom: 1.25rem; padding: 1rem; background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap; margin-bottom: 0.75rem;">
+              <div>
+                <strong>🧩 Tâches synchronisées Odoo</strong>
+                <div style="font-size: 0.875rem; color: #666; margin-top: 0.25rem;">
+                  Retrouvez ici les tâches importées depuis Odoo, ou dupliquez-les en local si vous voulez les garder hors synchronisation.
+                </div>
+              </div>
+              <div style="font-size: 0.875rem; color: #666;">{{ filteredOdooTasks.length }} tâche(s)</div>
+            </div>
+
+            <div class="search-input-wrapper" style="margin-bottom: 1rem;">
+              <span class="search-icon">🔍</span>
+              <input
+                v-model="tasksSearchQuery"
+                type="text"
+                placeholder="Rechercher une tâche Odoo..."
+                class="search-input"
+              />
+              <button v-if="tasksSearchQuery" @click="tasksSearchQuery = ''" class="clear-search">✕</button>
+            </div>
+
+            <div v-if="!odooConfigured" class="alert-inline">⚠️ Odoo n'est pas configuré.</div>
+            <div v-else-if="odooTasksError" class="alert-inline alert-error">❌ {{ odooTasksError }}</div>
+            <div v-else-if="filteredOdooTasks.length === 0" style="color:#999;">{{ tasksSearchQuery ? 'Aucune tâche Odoo ne correspond à votre recherche.' : 'Aucune tâche Odoo trouvée pour ce projet.' }}</div>
+
+            <div v-else style="display:grid; gap:0.75rem;">
+              <div v-for="task in filteredOdooTasks" :key="`odoo-inline-${task.odooId}`" class="card task-card" style="margin-bottom:0;">
+                <div class="ticket-header">
+                  <div style="flex: 1;">
+                    <h3 class="clickable-title" @click="viewOdooTask(task.odooId)">{{ task.title }}</h3>
+                    <div style="display:flex; gap:0.5rem; margin-top:0.5rem; flex-wrap:wrap;">
+                      <span class="badge badge-info">Synchronisée Odoo</span>
+                      <span class="badge" :class="getTicketStatusClass(task.status)">{{ getTicketStatusLabel(task.status) }}</span>
+                      <span class="badge" :class="getPriorityClass(task.priority)">{{ getPriorityLabel(task.priority) }}</span>
+                    </div>
+                  </div>
+                  <div class="ticket-actions">
+                    <button @click="viewOdooTask(task.odooId)" class="btn btn-primary btn-sm">👁️ Voir</button>
+                    <button @click="duplicateOdooTaskAsLocal(task)" class="btn btn-secondary btn-sm">📋 Dupliquer en local</button>
+                  </div>
+                </div>
+                <div v-if="task.description" class="ticket-description" v-html="truncateHtml(task.description)"></div>
+              </div>
+            </div>
+          </div>
+
           <!-- Générateur IA de tâches -->
           <div v-if="showAiTaskGenerator" style="margin-top: 1rem; padding: 1.5rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
             <h4 style="color: white; margin-top: 0; display: flex; align-items: center; gap: 0.5rem;">
@@ -731,8 +797,12 @@
             </h4>
             
             <div style="background: white; padding: 1.5rem; border-radius: 8px; margin-top: 1rem;">
+              <div v-if="usesAssistantAiConfigForChiffrage" style="margin-bottom: 1rem; padding: 0.75rem; background: #d4edda; border-radius: 6px; border-left: 4px solid #28a745; color: #155724;">
+                ✅ Le chiffrage IA utilise la configuration de l'Assistant IA global (<strong>{{ getProviderName() }}</strong>). Modifiez-la dans l'administration si nécessaire.
+              </div>
+
               <!-- Configuration API -->
-              <div v-if="!aiApiKey && aiProvider !== 'ollama'" style="margin-bottom: 1.5rem; padding: 1rem; background: #fff3cd; border-radius: 6px; border-left: 4px solid #ffc107;">
+              <div v-if="!usesAssistantAiConfigForChiffrage && !aiApiKey && aiProvider !== 'ollama'" style="margin-bottom: 1.5rem; padding: 1rem; background: #fff3cd; border-radius: 6px; border-left: 4px solid #ffc107;">
                 <div class="form-group" style="margin-bottom: 1rem;">
                   <label style="font-weight: 600;">🤖 Provider IA</label>
                   <select v-model="aiProvider" style="margin-top: 0.5rem;">
@@ -761,7 +831,7 @@
                 </div>
               </div>
 
-              <div v-else-if="aiProvider !== 'ollama'" style="margin-bottom: 1.5rem;">
+              <div v-else-if="!usesAssistantAiConfigForChiffrage && aiProvider !== 'ollama'" style="margin-bottom: 1.5rem;">
                 <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; background: #d4edda; border-radius: 6px; border-left: 4px solid #28a745;">
                   <span style="color: #155724; font-weight: 500;">✓ {{ getProviderName() }} configuré</span>
                   <button @click="removeApiKey" class="btn btn-secondary btn-sm">🗑️ Supprimer</button>
@@ -769,7 +839,7 @@
               </div>
 
               <!-- Message Ollama -->
-              <div v-if="aiProvider === 'ollama'" style="margin-bottom: 1.5rem; padding: 1rem; background: #d1ecf1; border-radius: 6px; border-left: 4px solid #17a2b8;">
+              <div v-if="effectiveAiProvider === 'ollama'" style="margin-bottom: 1.5rem; padding: 1rem; background: #d1ecf1; border-radius: 6px; border-left: 4px solid #17a2b8;">
                 <div style="margin-bottom: 0.5rem;">
                   <strong>🚀 Ollama - IA Locale</strong>
                 </div>
@@ -878,7 +948,7 @@
                   {{ aiGenerating ? '🔄 Génération en cours...' : '✨ Générer les tâches' }}
                 </button>
                 <button 
-                  @click="showAiTaskGenerator = false" 
+                  @click="closeAiTaskGenerator" 
                   class="btn btn-secondary"
                   :disabled="aiGenerating"
                 >
@@ -890,12 +960,16 @@
             <!-- Tâches générées (prévisualisation) -->
             <div v-if="generatedTasks.length > 0" style="margin-top: 1.5rem; background: white; padding: 1.5rem; border-radius: 8px;">
               <h4 style="margin-top: 0; display: flex; justify-content: space-between; align-items: center;">
-                <span>📋 Tâches générées ({{ generatedTasks.length }})</span>
+                <span>📋 Tâches générées en prévisualisation ({{ generatedTasks.length }})</span>
                 <div style="display: flex; gap: 0.5rem;">
-                  <button @click="saveGeneratedTasks" class="btn btn-primary">💾 Enregistrer toutes</button>
+                  <button @click="saveGeneratedTasks" class="btn btn-primary">💾 Créer toutes les tâches</button>
                   <button @click="generatedTasks = []" class="btn btn-secondary">🗑️ Effacer</button>
                 </div>
               </h4>
+
+              <div style="margin-bottom: 1rem; padding: 0.75rem 1rem; background: #fff3cd; color: #856404; border-radius: 6px; border: 1px solid #ffe69c;">
+                ⚠️ Les tâches ne sont pas encore enregistrées. Cliquez sur <strong>Créer toutes les tâches</strong> pour les ajouter aux tâches locales du projet.
+              </div>
               
               <div style="max-height: 400px; overflow-y: auto;">
                 <div 
@@ -913,6 +987,7 @@
                       <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem;">
                         <span v-if="task.lotNumber" class="badge" style="background: #ffc107; color: #000;">📦 {{ task.lotNumber }}</span>
                         <span v-if="task.difficulty" class="badge" :style="getDifficultyBadgeStyle(task.difficulty)">{{ getDifficultyLabel(task.difficulty) }}</span>
+                        <span v-if="task.storyPoints !== null && task.storyPoints !== undefined" class="badge" style="background: #6f42c1; color: white;">🃏 {{ task.storyPoints }} SP</span>
                         <span v-if="task.estimatedTime" class="badge" style="background: #28a745; color: white;">⏱️ {{ task.estimatedTime }}h</span>
                         <span v-if="task.estimatedTime && project.tjm" class="badge" style="background: #dc3545; color: white;">
                           💰 {{ ((task.estimatedTime / (project.hoursPerDay || 8)) * project.tjm).toFixed(0) }}€
@@ -998,6 +1073,20 @@
                 </select>
               </div>
 
+              <div v-if="project?.odooId && odooConfigured && !localTaskForm.id" class="form-group" style="padding: 0.85rem; background: #eef6ff; border: 1px solid #cfe2ff; border-radius: 8px;">
+                <label style="display: flex; align-items: center; gap: 0.5rem;">
+                  <input type="checkbox" v-model="localTaskFormOptions.syncToOdoo" style="width: auto;" />
+                  <strong>🔄 Synchroniser cette tâche dans Odoo à la création</strong>
+                </label>
+                <small style="display:block; margin-top: 0.35rem; color: #4b5563;">
+                  Si activé, la tâche sera créée localement et dans Odoo, puis marquée comme synchronisée.
+                </small>
+              </div>
+
+              <div v-else-if="localTaskForm.syncMode === 'odoo' || localTaskForm.odooTaskId" class="form-group" style="padding: 0.85rem; background: #eef6ff; border: 1px solid #cfe2ff; border-radius: 8px; color: #1d4ed8;">
+                🔄 Cette tâche est déjà synchronisée avec Odoo.
+              </div>
+
               <!-- Champs de chiffrage (seulement si activé sur le projet) -->
               <div v-if="project?.chiffrageEnabled" style="margin-top: 1rem; padding: 1rem; background: white; border-radius: 8px; border: 1px solid #ddd;">
                 <div class="form-group">
@@ -1011,6 +1100,16 @@
                   <div class="form-group">
                     <label>Numéro de lot</label>
                     <input v-model="localTaskForm.lotNumber" placeholder="Ex: LOT-001" />
+                  </div>
+                  <div class="form-group">
+                    <label>Story Points (Planning Poker Scrum)</label>
+                    <select v-model="localTaskForm.storyPoints" @change="applyLocalTaskPlanningPokerEstimate">
+                      <option :value="null">Sélectionner...</option>
+                      <option v-for="sp in planningPokerScale" :key="`sp-${sp}`" :value="sp">{{ sp }} SP</option>
+                    </select>
+                    <small style="color: #666; display: block; margin-top: 0.25rem;">
+                      Échelle Fibonacci : {{ planningPokerScale.join(', ') }}
+                    </small>
                   </div>
                   <div class="form-group">
                     <label>Difficulté</label>
@@ -1081,11 +1180,14 @@
                   <h3 class="clickable-title">{{ task.title }}</h3>
                   <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap;">
                     <span class="badge badge-success">Tâche Locale</span>
+                    <span v-if="task.syncMode === 'odoo' || task.odooTaskId" class="badge" style="background: #0d6efd; color: white;">🔄 Synchronisée Odoo</span>
+                    <span v-else class="badge" style="background: #6c757d; color: white;">💾 Locale uniquement</span>
                     <span class="badge" :class="getTicketStatusClass(task.status)">{{ getTicketStatusLabel(task.status) }}</span>
                     <span class="badge" :class="getPriorityClass(task.priority)">{{ getPriorityLabel(task.priority) }}</span>
                     <span class="badge badge-info">👤 {{ getUserDisplayName(task.assignedUserId) }}</span>
                     <span v-if="task.sprintId" class="badge badge-info">🏃 {{ getSprintName(task.sprintId) }}</span>
                     <span v-if="task.startDate" class="badge badge-info">📅 Début: {{ task.startDate }}</span>
+                    <span v-if="task.storyPoints !== null && task.storyPoints !== undefined" class="badge" style="background: #6f42c1; color: white;">🃏 {{ task.storyPoints }} SP</span>
                     <span v-if="task.estimatedTime" class="badge badge-success">⏱️ {{ task.estimatedTime }}h</span>
                     <span v-if="task.isChiffrage" class="badge" style="background: #4DBA87; color: white;">💰 Chiffrage</span>
                   </div>
@@ -1093,6 +1195,7 @@
                   <div v-if="task.isChiffrage" style="margin-top: 0.5rem; padding: 0.5rem; background: #f0f8ff; border-radius: 4px; font-size: 0.875rem;">
                     <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
                       <span v-if="task.lotNumber"><strong>Lot:</strong> {{ task.lotNumber }}</span>
+                      <span v-if="task.storyPoints !== null && task.storyPoints !== undefined"><strong>Planning Poker:</strong> {{ task.storyPoints }} SP</span>
                       <span v-if="task.difficulty"><strong>Difficulté:</strong> {{ getDifficultyLabel(task.difficulty) }}</span>
                       <span v-if="task.estimatedTime"><strong>Estimé:</strong> {{ task.estimatedTime }}h</span>
                       <span v-if="project.tjm && task.estimatedTime" style="color: #4DBA87; font-weight: 600;">
@@ -1109,6 +1212,13 @@
                   class="btn btn-secondary btn-sm"
                 >
                   🏃 Ajouter au sprint
+                </button>
+                <button
+                  v-if="canSyncLocalTask(task)"
+                  @click="syncLocalTaskToOdoo(task)"
+                  class="btn btn-secondary btn-sm"
+                >
+                  🔄 Synchroniser Odoo
                 </button>
                 <button @click="editLocalTask(task)" class="btn btn-secondary btn-sm">✏️ Éditer</button>
                 <button @click="deleteLocalTaskConfirm(task)" class="btn btn-danger btn-sm">🗑️ Supprimer</button>
@@ -1233,6 +1343,134 @@
           </div>
         </template>
 
+        <template v-else-if="projectContentView === 'roadmap'">
+          <div class="section-header">
+            <h3>🧭 Roadmap basée sur la planification</h3>
+            <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
+              <label style="display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; font-size: 0.875rem;">
+                <input type="checkbox" v-model="roadmapIncludeCompleted" style="width: auto;" />
+                <span>Inclure les éléments terminés</span>
+              </label>
+              <button class="btn btn-secondary btn-sm" @click="exportRoadmapMarkdown">⬇️ Export roadmap (.md)</button>
+              <button class="btn btn-secondary btn-sm" @click="exportRoadmapExcel">⬇️ Export roadmap (.xlsx)</button>
+            </div>
+          </div>
+
+          <div class="card" style="margin-bottom: 1rem;">
+            <strong>Vue d'ensemble</strong>
+            <div style="margin-top: 0.5rem; display: flex; gap: 1rem; flex-wrap: wrap; color: #555;">
+              <span>🏃 {{ roadmapSprintSections.length }} sprint(s)</span>
+              <span>🗓️ {{ roadmapMonthlySections.length }} segment(s) hors sprint</span>
+              <span>📥 {{ roadmapBacklogItems.length }} item(s) non planifié(s)</span>
+            </div>
+          </div>
+
+          <div v-if="roadmapSprintSections.length === 0 && roadmapMonthlySections.length === 0 && roadmapBacklogItems.length === 0" class="card" style="text-align:center; color:#999;">
+            Aucun élément planifiable trouvé pour la roadmap.
+          </div>
+
+          <template v-else>
+            <div v-for="section in roadmapSprintSections" :key="`roadmap-sprint-${section.id}`" class="card" style="margin-bottom: 1rem;">
+              <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:0.75rem; flex-wrap:wrap;">
+                <div>
+                  <h4 style="margin: 0;">🏃 {{ section.name }}</h4>
+                  <small style="color:#666;">{{ section.periodLabel }} • {{ getStatusLabel(section.status) }}</small>
+                </div>
+                <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                  <span class="badge badge-info">{{ section.items.length }} item(s)</span>
+                  <span class="badge" style="background:#6f42c1; color:white;">{{ section.totals.storyPoints }} SP</span>
+                  <span class="badge badge-success">{{ section.totals.hours }}h</span>
+                </div>
+              </div>
+
+              <div v-if="section.items.length === 0" style="margin-top: 0.75rem; color:#999;">
+                Aucun ticket / tâche planifié dans ce sprint.
+              </div>
+
+              <div v-else style="margin-top: 0.75rem; display:grid; gap:0.5rem;">
+                <div
+                  v-for="item in section.items"
+                  :key="`roadmap-item-${item.type}-${item.id}`"
+                  style="padding:0.65rem 0.75rem; border:1px solid #e5e7eb; border-radius:8px; background:#fff; cursor:pointer;"
+                  @click="openRoadmapItem(item)"
+                >
+                  <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem;">
+                    <strong>{{ item.type === 'ticket' ? '🎫' : '✅' }} {{ item.title }}</strong>
+                    <div style="display:flex; gap:0.35rem; flex-wrap:wrap;">
+                      <span class="badge" :class="getPriorityClass(item.priority)">{{ getPriorityLabel(item.priority) }}</span>
+                      <span class="badge" :class="getTicketStatusClass(item.status)">{{ getTicketStatusLabel(item.status) }}</span>
+                    </div>
+                  </div>
+                  <div style="margin-top:0.35rem; color:#666; font-size:0.85rem; display:flex; gap:0.65rem; flex-wrap:wrap;">
+                    <span>📅 {{ item.startDate || 'Date non définie' }}</span>
+                    <span>⏱️ {{ item.estimatedTime }}h</span>
+                    <span v-if="item.storyPoints !== null && item.storyPoints !== undefined">🃏 {{ item.storyPoints }} SP</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div v-for="section in roadmapMonthlySections" :key="`roadmap-month-${section.key}`" class="card" style="margin-bottom: 1rem;">
+              <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:0.75rem; flex-wrap:wrap;">
+                <div>
+                  <h4 style="margin: 0;">🗓️ {{ section.label }} (hors sprint)</h4>
+                </div>
+                <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                  <span class="badge badge-info">{{ section.items.length }} item(s)</span>
+                  <span class="badge" style="background:#6f42c1; color:white;">{{ section.totals.storyPoints }} SP</span>
+                  <span class="badge badge-success">{{ section.totals.hours }}h</span>
+                </div>
+              </div>
+
+              <div style="margin-top: 0.75rem; display:grid; gap:0.5rem;">
+                <div
+                  v-for="item in section.items"
+                  :key="`roadmap-month-item-${item.type}-${item.id}`"
+                  style="padding:0.65rem 0.75rem; border:1px solid #e5e7eb; border-radius:8px; background:#fff; cursor:pointer;"
+                  @click="openRoadmapItem(item)"
+                >
+                  <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem;">
+                    <strong>{{ item.type === 'ticket' ? '🎫' : '✅' }} {{ item.title }}</strong>
+                    <div style="display:flex; gap:0.35rem; flex-wrap:wrap;">
+                      <span class="badge" :class="getPriorityClass(item.priority)">{{ getPriorityLabel(item.priority) }}</span>
+                      <span class="badge" :class="getTicketStatusClass(item.status)">{{ getTicketStatusLabel(item.status) }}</span>
+                    </div>
+                  </div>
+                  <div style="margin-top:0.35rem; color:#666; font-size:0.85rem; display:flex; gap:0.65rem; flex-wrap:wrap;">
+                    <span>📅 {{ item.startDate || 'Date non définie' }}</span>
+                    <span>⏱️ {{ item.estimatedTime }}h</span>
+                    <span v-if="item.storyPoints !== null && item.storyPoints !== undefined">🃏 {{ item.storyPoints }} SP</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card" v-if="roadmapBacklogItems.length > 0">
+              <h4 style="margin-top: 0;">📥 Backlog non planifié</h4>
+              <div style="display:grid; gap:0.5rem;">
+                <div
+                  v-for="item in roadmapBacklogItems"
+                  :key="`roadmap-backlog-${item.type}-${item.id}`"
+                  style="padding:0.65rem 0.75rem; border:1px solid #e5e7eb; border-radius:8px; background:#fff; cursor:pointer;"
+                  @click="openRoadmapItem(item)"
+                >
+                  <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem;">
+                    <strong>{{ item.type === 'ticket' ? '🎫' : '✅' }} {{ item.title }}</strong>
+                    <div style="display:flex; gap:0.35rem; flex-wrap:wrap;">
+                      <span class="badge" :class="getPriorityClass(item.priority)">{{ getPriorityLabel(item.priority) }}</span>
+                      <span class="badge" :class="getTicketStatusClass(item.status)">{{ getTicketStatusLabel(item.status) }}</span>
+                    </div>
+                  </div>
+                  <div style="margin-top:0.35rem; color:#666; font-size:0.85rem; display:flex; gap:0.65rem; flex-wrap:wrap;">
+                    <span>⏱️ {{ item.estimatedTime }}h</span>
+                    <span v-if="item.storyPoints !== null && item.storyPoints !== undefined">🃏 {{ item.storyPoints }} SP</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </template>
+
         <template v-else-if="projectContentView === 'githubCommits'">
           <div class="section-header">
             <h3>🐙 Tous les commits du dépôt</h3>
@@ -1287,7 +1525,10 @@
                     <span> • {{ formatDate(commit.date) }}</span>
                   </div>
                 </div>
-                <a :href="commit.htmlUrl" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">🔎 Voir</a>
+                <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                  <button class="btn btn-secondary btn-sm" @click="previewGithubCommit(commit)">👁️ Voir tout</button>
+                  <a :href="commit.htmlUrl" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">🔗 GitHub</a>
+                </div>
               </div>
             </div>
           </div>
@@ -1347,7 +1588,10 @@
                     <span> • {{ formatDate(commit.date) }}</span>
                   </div>
                 </div>
-                <a :href="commit.htmlUrl" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">🔎 Voir</a>
+                <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                  <button class="btn btn-secondary btn-sm" @click="previewGitlabCommit(commit)">👁️ Voir tout</button>
+                  <a :href="commit.htmlUrl" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">🔗 GitLab</a>
+                </div>
               </div>
             </div>
           </div>
@@ -1443,6 +1687,48 @@
         </div>
       </div>
     </div>
+
+    <div v-if="showCommitPreview" class="attachment-modal" @click="closeCommitPreview">
+      <div class="attachment-modal-content commit-preview-modal" @click.stop>
+        <div class="attachment-modal-header">
+          <div style="min-width: 0;">
+            <h3 style="white-space: normal;">{{ currentCommitPreview?.message || 'Prévisualisation du commit' }}</h3>
+            <small>
+              {{ currentCommitPreview?.sha?.slice(0, 7) }}
+              <template v-if="currentCommitPreview?.author"> • {{ currentCommitPreview.author }}</template>
+              <template v-if="currentCommitPreview?.date"> • {{ formatDate(currentCommitPreview.date) }}</template>
+            </small>
+          </div>
+          <div style="display: flex; gap: 0.5rem;">
+            <a v-if="currentCommitPreview?.htmlUrl" :href="currentCommitPreview.htmlUrl" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">🔗 Ouvrir</a>
+            <button @click="closeCommitPreview" class="btn btn-secondary btn-sm">✕</button>
+          </div>
+        </div>
+        <div class="attachment-modal-body" style="display: block; background: #fff;">
+          <div v-if="commitPreviewLoading" style="padding: 1rem; color: #666;">Chargement des modifications…</div>
+          <div v-else-if="commitPreviewError" class="alert-inline alert-error">{{ commitPreviewError }}</div>
+          <div v-else-if="!currentCommitPreview || !currentCommitPreview.files || currentCommitPreview.files.length === 0" style="padding: 1rem; color: #666;">
+            Aucune modification détaillée disponible pour ce commit.
+          </div>
+          <div v-else class="commit-preview-files">
+            <div v-for="file in currentCommitPreview.files" :key="`commit-file-${file.filename}`" class="commit-preview-file">
+              <div class="commit-preview-file-header">
+                <div>
+                  <strong>{{ file.filename }}</strong>
+                  <small v-if="file.status"> • {{ file.status }}</small>
+                </div>
+                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; color: #666; font-size: 0.85rem;">
+                  <span v-if="Number.isFinite(Number(file.additions))">+{{ file.additions }}</span>
+                  <span v-if="Number.isFinite(Number(file.deletions))">-{{ file.deletions }}</span>
+                  <span v-if="Number.isFinite(Number(file.changes))">Δ {{ file.changes }}</span>
+                </div>
+              </div>
+              <pre class="commit-preview-patch">{{ file.patch || 'Aperçu de diff non disponible pour ce fichier.' }}</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -1451,10 +1737,12 @@ import { db } from '../services/database-new'
 import * as XLSX from 'xlsx'
 import { odooService } from '../services/odoo-new'
 import { auth } from '../services/auth'
-import { parseGithubRepoRef, listGithubCommits, listGithubBranches, createGithubBranch } from '../services/github'
-import { parseGitlabRepoRef, listGitlabCommits, listGitlabBranches, createGitlabBranch } from '../services/gitlab'
+import { parseGithubRepoRef, listGithubCommits, listGithubBranches, createGithubBranch, fetchGithubCommitDetails } from '../services/github'
+import { parseGitlabRepoRef, listGitlabCommits, listGitlabBranches, createGitlabBranch, fetchGitlabCommitDetails } from '../services/gitlab'
 import RichTextEditor from './RichTextEditor.vue'
 import KanbanColumnsEditor from './KanbanColumnsEditor.vue'
+
+const AI_CONFIG_KEY = 'app-ai-assistant-config'
 
 export default {
   name: 'ProjectDetail',
@@ -1519,11 +1807,25 @@ export default {
       // Prévisualisation des pièces jointes
       showAttachmentPreview: false,
       currentAttachment: null,
+      showCommitPreview: false,
+      commitPreviewLoading: false,
+      commitPreviewError: '',
+      currentCommitPreview: null,
       pendingKanbanColumns: null,
       chiffrageConfig: {
         enabled: false,
         tjm: 0,
         hoursPerDay: 8
+      },
+      assistantAiConfig: {
+        enabled: true,
+        strategy: 'local',
+        provider: 'mistral',
+        baseUrl: 'https://api.mistral.ai/v1',
+        apiKey: '',
+        model: 'mistral-small-latest',
+        temperature: 0.2,
+        systemPrompt: 'Tu es un assistant de priorisation pour une application de gestion de tickets. Réponds en français, de façon concise, actionnable et structurée.'
       },
       // Générateur IA
       aiApiKey: localStorage.getItem('openai_api_key') || '',
@@ -1565,16 +1867,21 @@ export default {
         status: 'todo',
         priority: 'medium',
         sprintId: null,
+        syncMode: 'local',
+        odooTaskId: null,
+        syncedAt: null,
         startDate: new Date().toISOString().split('T')[0],
         assignedUserId: null,
         isChiffrage: false,
         lotNumber: '',
         difficulty: '',
+        storyPoints: null,
         estimatedTime: 0,
         attachments: []
       },
       localTaskFormOptions: {
-        addToCurrentSprint: false
+        addToCurrentSprint: false,
+        syncToOdoo: false
       },
       ticketFormOptions: {
         addToTodo: false,
@@ -1602,7 +1909,9 @@ export default {
       ticketGitlabError: '',
       showCompletedTickets: false,
       showCompletedOdooTasks: false,
-      showCompletedLocalTasks: false
+      showCompletedLocalTasks: false,
+      roadmapIncludeCompleted: false,
+      planningPokerScale: [0.5, 1, 2, 3, 5, 8, 13, 21]
     }
   },
   computed: {
@@ -1784,13 +2093,21 @@ export default {
     allLocalTasksSelected() {
       return this.filteredLocalTasks.length > 0 && this.selectedLocalTaskIds.length === this.filteredLocalTasks.length
     },
+    usesAssistantAiConfigForChiffrage() {
+      return this.getEffectiveAiConfig().source === 'assistant'
+    },
+    effectiveAiProvider() {
+      return this.getEffectiveAiConfig().provider
+    },
     canGenerateAi() {
-      if (this.aiProvider === 'ollama') {
+      const cfg = this.getEffectiveAiConfig()
+
+      if (cfg.provider === 'ollama') {
         if (this.aiGenerationMethod === 'prompt') return this.aiPrompt.trim().length > 10
         if (this.aiGenerationMethod === 'file') return this.uploadedFileContent.length > 0
         return false
       }
-      if (!this.aiApiKey) return false
+      if (!cfg.apiKey) return false
       if (this.aiGenerationMethod === 'prompt') return this.aiPrompt.trim().length > 10
       if (this.aiGenerationMethod === 'file') return this.uploadedFileContent.length > 0
       return false
@@ -1906,11 +2223,114 @@ export default {
       })
 
       return rows.sort((a, b) => String(a.userName).localeCompare(String(b.userName)))
+    },
+    roadmapItems() {
+      const ticketItems = (this.tickets || []).map(ticket => ({
+        id: ticket.id,
+        type: 'ticket',
+        title: ticket.title || 'Sans titre',
+        status: ticket.status || 'todo',
+        priority: ticket.priority || 'medium',
+        sprintId: ticket.sprintId ? Number(ticket.sprintId) : null,
+        startDate: ticket.startDate ? this.toDateOnlyString(ticket.startDate) : '',
+        estimatedTime: Number(ticket.estimatedTime || 0),
+        storyPoints: null
+      }))
+
+      const localTaskItems = (this.localTasks || []).map(task => ({
+        id: task.id,
+        type: 'localTask',
+        title: task.title || 'Sans titre',
+        status: task.status || 'todo',
+        priority: task.priority || 'medium',
+        sprintId: task.sprintId ? Number(task.sprintId) : null,
+        startDate: task.startDate ? this.toDateOnlyString(task.startDate) : '',
+        estimatedTime: Number(task.estimatedTime || 0),
+        storyPoints: this.normalizeStoryPoints(task.storyPoints)
+      }))
+
+      const merged = [...ticketItems, ...localTaskItems]
+        .filter(item => this.roadmapIncludeCompleted || !this.isCompletedStatus(item.status))
+        .sort((a, b) => {
+          const dateA = a.startDate || '9999-12-31'
+          const dateB = b.startDate || '9999-12-31'
+          if (dateA !== dateB) return dateA.localeCompare(dateB)
+          const priorityDiff = this.getRoadmapPriorityRank(a.priority) - this.getRoadmapPriorityRank(b.priority)
+          if (priorityDiff !== 0) return priorityDiff
+          return String(a.title || '').localeCompare(String(b.title || ''))
+        })
+
+      return merged
+    },
+    roadmapSprintSections() {
+      const sprintMap = new Map((this.sprints || []).map(sprint => [Number(sprint.id), sprint]))
+      const sections = (this.sprints || [])
+        .slice()
+        .sort((a, b) => {
+          const aDate = a.startDate ? this.toDateOnlyString(a.startDate) : '9999-12-31'
+          const bDate = b.startDate ? this.toDateOnlyString(b.startDate) : '9999-12-31'
+          return aDate.localeCompare(bDate)
+        })
+        .map(sprint => {
+          const sprintId = Number(sprint.id)
+          const items = this.roadmapItems.filter(item => item.sprintId === sprintId)
+          return {
+            id: sprintId,
+            name: sprint.name,
+            status: sprint.status,
+            startDate: sprint.startDate ? this.toDateOnlyString(sprint.startDate) : '',
+            endDate: sprint.endDate ? this.toDateOnlyString(sprint.endDate) : '',
+            periodLabel: this.getRoadmapPeriodLabel(sprint.startDate, sprint.endDate),
+            items,
+            totals: this.getRoadmapTotals(items)
+          }
+        })
+        .filter(section => section.items.length > 0 || section.status !== 'completed' || this.roadmapIncludeCompleted)
+
+      // Sécurité si des items pointent vers un sprint supprimé
+      const orphanSprintItems = this.roadmapItems.filter(item => item.sprintId && !sprintMap.has(Number(item.sprintId)))
+      if (orphanSprintItems.length > 0) {
+        sections.push({
+          id: 'orphan',
+          name: 'Sprint inconnu',
+          status: 'planned',
+          startDate: '',
+          endDate: '',
+          periodLabel: 'Période non définie',
+          items: orphanSprintItems,
+          totals: this.getRoadmapTotals(orphanSprintItems)
+        })
+      }
+
+      return sections
+    },
+    roadmapMonthlySections() {
+      const grouped = new Map()
+      const items = this.roadmapItems.filter(item => !item.sprintId && !!item.startDate)
+
+      for (const item of items) {
+        const key = String(item.startDate).slice(0, 7)
+        if (!grouped.has(key)) grouped.set(key, [])
+        grouped.get(key).push(item)
+      }
+
+      return Array.from(grouped.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([key, monthItems]) => ({
+          key,
+          label: this.getMonthLabelFromKey(key),
+          items: monthItems,
+          totals: this.getRoadmapTotals(monthItems)
+        }))
+    },
+    roadmapBacklogItems() {
+      return this.roadmapItems.filter(item => !item.sprintId && !item.startDate)
     }
   },
   async mounted() {
     this.currentUserId = auth.getSession()?.userId || null
     this.ganttWeekStart = this.getWeekStart(new Date())
+    this.loadAssistantAiConfig()
     await this.loadUsers()
     await this.loadProject()
     await this.loadSprints()
@@ -2119,6 +2539,241 @@ export default {
       if (priority === 'high') return '#dc3545'
       if (priority === 'medium') return '#fd7e14'
       return '#4DBA87'
+    },
+    getRoadmapPriorityRank(priority) {
+      const value = String(priority || '').toLowerCase()
+      if (value === 'high') return 0
+      if (value === 'medium') return 1
+      return 2
+    },
+    getMonthLabelFromKey(key) {
+      if (!key || !/^\d{4}-\d{2}$/.test(String(key))) return 'Mois non défini'
+      const [year, month] = String(key).split('-').map(Number)
+      const date = new Date(year, (month || 1) - 1, 1)
+      return date.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
+    },
+    getRoadmapPeriodLabel(startDate, endDate) {
+      const start = startDate ? this.toDateOnlyString(startDate) : ''
+      const end = endDate ? this.toDateOnlyString(endDate) : ''
+      if (start && end) return `${start} → ${end}`
+      if (start) return `À partir du ${start}`
+      if (end) return `Jusqu'au ${end}`
+      return 'Période non définie'
+    },
+    getRoadmapTotals(items = []) {
+      const totals = (items || []).reduce((acc, item) => {
+        acc.hours += Number(item?.estimatedTime || 0)
+        acc.storyPoints += Number(item?.storyPoints || 0)
+        return acc
+      }, { hours: 0, storyPoints: 0 })
+
+      return {
+        hours: Number(totals.hours.toFixed(2)),
+        storyPoints: Number(totals.storyPoints.toFixed(2))
+      }
+    },
+    openRoadmapItem(item) {
+      if (!item?.id) return
+      if (item.type === 'ticket') {
+        this.viewTicket(item.id)
+        return
+      }
+      this.$router.push(`/local-tasks/${item.id}`)
+    },
+    exportRoadmapMarkdown() {
+      const lines = []
+      lines.push(`# Roadmap - ${this.project?.name || 'Projet'}`)
+      lines.push('')
+      lines.push(`_Généré le ${new Date().toLocaleString('fr-FR')}_`)
+      lines.push('')
+      lines.push(`- Sprints: ${this.roadmapSprintSections.length}`)
+      lines.push(`- Segments hors sprint: ${this.roadmapMonthlySections.length}`)
+      lines.push(`- Backlog non planifié: ${this.roadmapBacklogItems.length}`)
+      lines.push('')
+
+      for (const section of this.roadmapSprintSections) {
+        lines.push(`## Sprint - ${section.name}`)
+        lines.push(`- Période: ${section.periodLabel}`)
+        lines.push(`- Statut: ${this.getStatusLabel(section.status)}`)
+        lines.push(`- Charge: ${section.items.length} item(s), ${section.totals.storyPoints} SP, ${section.totals.hours}h`)
+        lines.push('')
+        for (const item of section.items) {
+          lines.push(`- [${item.type === 'ticket' ? 'Ticket' : 'Tâche'}] ${item.title} — ${item.startDate || 'date ?'} — ${this.getPriorityLabel(item.priority)} — ${item.estimatedTime}h${item.storyPoints !== null && item.storyPoints !== undefined ? ` — ${item.storyPoints} SP` : ''}`)
+        }
+        lines.push('')
+      }
+
+      for (const section of this.roadmapMonthlySections) {
+        lines.push(`## Hors sprint - ${section.label}`)
+        lines.push(`- Charge: ${section.items.length} item(s), ${section.totals.storyPoints} SP, ${section.totals.hours}h`)
+        lines.push('')
+        for (const item of section.items) {
+          lines.push(`- [${item.type === 'ticket' ? 'Ticket' : 'Tâche'}] ${item.title} — ${item.startDate || 'date ?'} — ${this.getPriorityLabel(item.priority)} — ${item.estimatedTime}h${item.storyPoints !== null && item.storyPoints !== undefined ? ` — ${item.storyPoints} SP` : ''}`)
+        }
+        lines.push('')
+      }
+
+      if (this.roadmapBacklogItems.length > 0) {
+        lines.push('## Backlog non planifié')
+        lines.push('')
+        for (const item of this.roadmapBacklogItems) {
+          lines.push(`- [${item.type === 'ticket' ? 'Ticket' : 'Tâche'}] ${item.title} — ${this.getPriorityLabel(item.priority)} — ${item.estimatedTime}h${item.storyPoints !== null && item.storyPoints !== undefined ? ` — ${item.storyPoints} SP` : ''}`)
+        }
+        lines.push('')
+      }
+
+      const content = lines.join('\n')
+      const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const safeProjectName = String(this.project?.name || 'projet').replace(/[^a-z0-9]/gi, '_')
+      link.href = url
+      link.download = `ROADMAP_${safeProjectName}_${new Date().toISOString().slice(0, 10)}.md`
+      link.click()
+      URL.revokeObjectURL(url)
+    },
+    exportRoadmapExcel() {
+      const allItems = this.roadmapItems || []
+      if (allItems.length === 0) {
+        alert('Aucun élément à exporter dans la roadmap.')
+        return
+      }
+
+      const hoursPerDay = Number(this.project?.hoursPerDay || 8)
+      const sprintById = new Map((this.sprints || []).map(s => [Number(s.id), s]))
+
+      const computeEndDate = (startDate, estimatedTime) => {
+        if (!startDate) return ''
+        const hours = Number(estimatedTime || 0)
+        const durationDays = Math.max(1, Math.ceil(hours / (hoursPerDay > 0 ? hoursPerDay : 8)))
+        return this.addDaysToDateString(startDate, durationDays - 1)
+      }
+
+      const normalizedItems = allItems.map(item => {
+        const sprint = item.sprintId ? sprintById.get(Number(item.sprintId)) : null
+        const effectiveStartDate = item.startDate || (sprint?.startDate ? this.toDateOnlyString(sprint.startDate) : '')
+        const endDate = computeEndDate(effectiveStartDate, item.estimatedTime)
+        return {
+          ...item,
+          effectiveStartDate,
+          endDate,
+          sprintName: sprint?.name || ''
+        }
+      })
+
+      const wb = XLSX.utils.book_new()
+
+      // Feuille 1: Synthèse
+      const totalHours = normalizedItems.reduce((sum, item) => sum + Number(item.estimatedTime || 0), 0)
+      const totalStoryPoints = normalizedItems.reduce((sum, item) => sum + Number(item.storyPoints || 0), 0)
+      const synthese = [
+        ['ROADMAP PROJET', this.project?.name || 'Projet'],
+        [],
+        ['Date export', new Date().toLocaleString('fr-FR')],
+        ['Inclure terminés', this.roadmapIncludeCompleted ? 'Oui' : 'Non'],
+        [],
+        ['Sprints', this.roadmapSprintSections.length],
+        ['Segments hors sprint', this.roadmapMonthlySections.length],
+        ['Backlog non planifié', this.roadmapBacklogItems.length],
+        [],
+        ['Total items', normalizedItems.length],
+        ['Total heures', Number(totalHours.toFixed(2))],
+        ['Total Story Points', Number(totalStoryPoints.toFixed(2))]
+      ]
+      const wsSynthese = XLSX.utils.aoa_to_sheet(synthese)
+      wsSynthese['!cols'] = [{ wch: 24 }, { wch: 36 }]
+      XLSX.utils.book_append_sheet(wb, wsSynthese, '📊 Synthèse')
+
+      // Feuille 2: Détail
+      const detailRows = [
+        ['Type', 'Titre', 'Sprint', 'Statut', 'Priorité', 'Début', 'Fin', 'Heures', 'Story Points']
+      ]
+      normalizedItems.forEach(item => {
+        detailRows.push([
+          item.type === 'ticket' ? 'Ticket' : 'Tâche locale',
+          item.title,
+          item.sprintName || '',
+          this.getTicketStatusLabel(item.status),
+          this.getPriorityLabel(item.priority),
+          item.effectiveStartDate || '',
+          item.endDate || '',
+          Number(item.estimatedTime || 0),
+          item.storyPoints !== null && item.storyPoints !== undefined ? Number(item.storyPoints) : ''
+        ])
+      })
+      const wsDetail = XLSX.utils.aoa_to_sheet(detailRows)
+      wsDetail['!cols'] = [
+        { wch: 14 }, { wch: 45 }, { wch: 24 }, { wch: 16 }, { wch: 12 },
+        { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 14 }
+      ]
+      XLSX.utils.book_append_sheet(wb, wsDetail, '📋 Détail')
+
+      // Feuille 3: Gantt (par mois)
+      const plannedItems = normalizedItems
+        .filter(item => !!item.effectiveStartDate)
+        .sort((a, b) => String(a.effectiveStartDate).localeCompare(String(b.effectiveStartDate)))
+
+      const ganttRows = []
+      if (plannedItems.length === 0) {
+        ganttRows.push(['Aucun élément planifié avec date de début.'])
+      } else {
+        const toMonthKey = (dateStr) => String(dateStr || '').slice(0, 7)
+        const monthLabel = key => {
+          const [y, m] = key.split('-').map(Number)
+          const d = new Date(y, (m || 1) - 1, 1)
+          return d.toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' })
+        }
+        const addOneMonth = key => {
+          const [y, m] = key.split('-').map(Number)
+          const date = new Date(y, (m || 1) - 1, 1)
+          date.setMonth(date.getMonth() + 1)
+          const ny = date.getFullYear()
+          const nm = String(date.getMonth() + 1).padStart(2, '0')
+          return `${ny}-${nm}`
+        }
+
+        const minStart = plannedItems[0].effectiveStartDate
+        const maxEnd = plannedItems.reduce((max, item) => {
+          const end = item.endDate || item.effectiveStartDate
+          return end > max ? end : max
+        }, plannedItems[0].endDate || plannedItems[0].effectiveStartDate)
+
+        let cursor = toMonthKey(minStart)
+        const last = toMonthKey(maxEnd)
+        const monthKeys = []
+        let guard = 0
+        while (cursor <= last && guard < 48) {
+          monthKeys.push(cursor)
+          cursor = addOneMonth(cursor)
+          guard += 1
+        }
+
+        ganttRows.push(['Type', 'Titre', 'Sprint', 'Début', 'Fin', 'Heures', 'SP', ...monthKeys.map(monthLabel)])
+
+        plannedItems.forEach(item => {
+          const startKey = toMonthKey(item.effectiveStartDate)
+          const endKey = toMonthKey(item.endDate || item.effectiveStartDate)
+          const timeline = monthKeys.map(key => (key >= startKey && key <= endKey ? '■' : ''))
+          ganttRows.push([
+            item.type === 'ticket' ? 'Ticket' : 'Tâche',
+            item.title,
+            item.sprintName || '',
+            item.effectiveStartDate,
+            item.endDate || item.effectiveStartDate,
+            Number(item.estimatedTime || 0),
+            item.storyPoints !== null && item.storyPoints !== undefined ? Number(item.storyPoints) : '',
+            ...timeline
+          ])
+        })
+      }
+
+      const wsGantt = XLSX.utils.aoa_to_sheet(ganttRows)
+      wsGantt['!cols'] = [{ wch: 10 }, { wch: 35 }, { wch: 20 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 8 }]
+      XLSX.utils.book_append_sheet(wb, wsGantt, '🗓️ Gantt')
+
+      const safeProjectName = String(this.project?.name || 'projet').replace(/[^a-z0-9]/gi, '_')
+      XLSX.writeFile(wb, `ROADMAP_${safeProjectName}_${new Date().toISOString().slice(0, 10)}.xlsx`)
+      alert(`✅ Export roadmap Excel généré\n\n📊 ${normalizedItems.length} item(s)\n⏱️ ${Number(totalHours.toFixed(2))}h\n🃏 ${Number(totalStoryPoints.toFixed(2))} SP`)
     },
     getGanttRowHeight(row) {
       const count = Math.max(1, Number(row?.items?.length || 1))
@@ -2730,6 +3385,55 @@ export default {
       await this.loadTodos()
       alert('✅ Tâche Odoo ajoutée à la todo list !')
     },
+    canSyncLocalTask(task) {
+      return !!(task?.id && !task?.odooTaskId && this.project?.odooId && this.odooConfigured)
+    },
+    async duplicateOdooTaskAsLocal(task) {
+      if (!task?.title) return
+
+      await db.addLocalTask({
+        projectId: this.project.id,
+        title: task.title,
+        description: task.description || '',
+        status: task.status || 'todo',
+        priority: task.priority || 'medium',
+        startDate: new Date().toISOString().split('T')[0],
+        assignedUserId: this.currentUserId,
+        syncMode: 'local',
+        odooTaskId: null,
+        syncedAt: null,
+        estimatedTime: 0,
+        attachments: []
+      })
+
+      await this.loadLocalTasks()
+      alert('✅ Tâche Odoo dupliquée en tâche locale.')
+    },
+    async syncLocalTaskToOdoo(task) {
+      if (!this.canSyncLocalTask(task)) return
+
+      try {
+        const createdOdooTaskId = await odooService.createProjectTask(
+          this.project.odooId,
+          task.title,
+          task.description || '',
+          task.priority || 'medium'
+        )
+
+        await db.updateLocalTask(task.id, {
+          syncMode: 'odoo',
+          odooTaskId: createdOdooTaskId,
+          syncedAt: new Date().toISOString()
+        })
+
+        await this.syncOdooTasksForProject()
+        await this.loadLocalTasks()
+        alert('✅ Tâche synchronisée vers Odoo.')
+      } catch (error) {
+        console.error('Erreur de synchronisation tâche locale vers Odoo:', error)
+        alert(`❌ ${error.message || 'Erreur de synchronisation Odoo'}`)
+      }
+    },
     getTodoText(ticket) {
       if (ticket?.odooId) {
         return `[TICKET ODOO #${ticket.odooId}] ${ticket.title}`
@@ -2858,6 +3562,7 @@ export default {
 
       const hoursPerDay = data.project.hoursPerDay || 8
       const tjm = data.project.tjm || 0
+      const totalStoryPoints = data.tasks.reduce((sum, task) => sum + (Number(task.storyPoints) || 0), 0)
       const now = new Date()
       const dateStr = now.toLocaleDateString('fr-FR')
       const timeStr = now.toLocaleTimeString('fr-FR')
@@ -2867,9 +3572,10 @@ export default {
       data.tasks.forEach(task => {
         const lot = task.lotNumber || 'Sans lot'
         if (!lotStats[lot]) {
-          lotStats[lot] = { count: 0, hours: 0, cost: 0 }
+          lotStats[lot] = { count: 0, storyPoints: 0, hours: 0, cost: 0 }
         }
         lotStats[lot].count++
+        lotStats[lot].storyPoints += Number(task.storyPoints) || 0
         lotStats[lot].hours += task.estimatedTime || 0
         lotStats[lot].cost += ((task.estimatedTime || 0) / hoursPerDay) * tjm
       })
@@ -2899,7 +3605,10 @@ export default {
         ['Chef de projet', ''],
         ['TJM configuré', `${tjm}€`],
         ['Heures par jour', `${hoursPerDay}h`],
+        ['Méthode estimation', 'Scrum Planning Poker (Fibonacci)'],
+        ['Échelle SP', this.planningPokerScale.join(', ')],
         ['Nombre de tâches', data.tasks.length],
+        ['Total Story Points', totalStoryPoints],
         [],
         ['TOTAUX'],
         ['Total heures estimées', `${data.totalEstimatedTime}h`],
@@ -2997,18 +3706,18 @@ export default {
       const parLot = [
         ['SYNTHÈSE PAR LOT'],
         [],
-        ['Lot', 'Nb tâches', 'Heures', 'Jours', 'Coût (€)', '% du total']
+        ['Lot', 'Nb tâches', 'Story Points', 'Heures', 'Jours', 'Coût (€)', '% du total']
       ]
       Object.entries(lotStats).forEach(([lot, stats]) => {
         const days = (stats.hours / hoursPerDay).toFixed(2)
         const percent = (stats.cost / data.totalCost * 100).toFixed(1)
-        parLot.push([lot, stats.count, `${stats.hours}h`, `${days}j`, `${stats.cost.toFixed(2)}€`, `${percent}%`])
+        parLot.push([lot, stats.count, stats.storyPoints, `${stats.hours}h`, `${days}j`, `${stats.cost.toFixed(2)}€`, `${percent}%`])
       })
       parLot.push([])
-      parLot.push(['TOTAL', data.tasks.length, `${data.totalEstimatedTime}h`, `${(data.totalEstimatedTime / hoursPerDay).toFixed(2)}j`, `${data.totalCost.toFixed(2)}€`, '100%'])
+      parLot.push(['TOTAL', data.tasks.length, totalStoryPoints, `${data.totalEstimatedTime}h`, `${(data.totalEstimatedTime / hoursPerDay).toFixed(2)}j`, `${data.totalCost.toFixed(2)}€`, '100%'])
       
       const wsLot = XLSX.utils.aoa_to_sheet(parLot)
-      wsLot['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 12 }]
+      wsLot['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 12 }]
       
       if (wsLot['A1']) {
         wsLot['A1'].s = { font: { bold: true, sz: 14, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "1F4788" } } }
@@ -3031,6 +3740,9 @@ export default {
       if (wsLot['F3']) {
         wsLot['F3'].s = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "FFC000" } } }
       }
+      if (wsLot['G3']) {
+        wsLot['G3'].s = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "FFC000" } } }
+      }
       
       XLSX.utils.book_append_sheet(wb, wsLot, '📦 Par Lot')
 
@@ -3038,7 +3750,7 @@ export default {
       const detailTaches = [
         ['DÉTAIL DES TÂCHES'],
         [],
-        ['N°', 'Lot', 'Titre', 'Difficulté', 'Priorité', 'Heures', 'Jours', 'Coût (€)', 'Statut', 'Description']
+        ['N°', 'Lot', 'Titre', 'Difficulté', 'SP', 'Priorité', 'Heures', 'Jours', 'Coût (€)', 'Statut', 'Description']
       ]
       
       // Trier par lot puis par difficulté
@@ -3055,6 +3767,7 @@ export default {
         const lotNumber = task.lotNumber || 'Sans lot'
         const title = task.title || ''
         const difficulty = this.getDifficultyLabel(task.difficulty || 'medium')
+        const storyPoints = Number(task.storyPoints) || 0
         const priority = this.getPriorityLabel(task.priority || 'medium')
         const estimatedTime = task.estimatedTime || 0
         const days = (estimatedTime / hoursPerDay).toFixed(2)
@@ -3062,19 +3775,19 @@ export default {
         const status = this.getTicketStatusLabel(task.status || 'todo')
         const description = this.extractText(task.description || '').substring(0, 200)
         
-        detailTaches.push([index + 1, lotNumber, title, difficulty, priority, estimatedTime, days, cost, status, description])
+        detailTaches.push([index + 1, lotNumber, title, difficulty, storyPoints, priority, estimatedTime, days, cost, status, description])
       })
       
       detailTaches.push([])
-      detailTaches.push(['', 'TOTAL', `${data.tasks.length} tâches`, '', '', data.totalEstimatedTime, (data.totalEstimatedTime / hoursPerDay).toFixed(2), data.totalCost.toFixed(2), '', ''])
+      detailTaches.push(['', 'TOTAL', `${data.tasks.length} tâches`, '', totalStoryPoints, '', data.totalEstimatedTime, (data.totalEstimatedTime / hoursPerDay).toFixed(2), data.totalCost.toFixed(2), '', ''])
       
       const wsDetail = XLSX.utils.aoa_to_sheet(detailTaches)
-      wsDetail['!cols'] = [{ wch: 5 }, { wch: 15 }, { wch: 30 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 15 }, { wch: 50 }]
+      wsDetail['!cols'] = [{ wch: 5 }, { wch: 15 }, { wch: 30 }, { wch: 12 }, { wch: 8 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 15 }, { wch: 50 }]
       
       if (wsDetail['A1']) {
         wsDetail['A1'].s = { font: { bold: true, sz: 14, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "1F4788" } } }
       }
-      const headerCells = ['A3', 'B3', 'C3', 'D3', 'E3', 'F3', 'G3', 'H3', 'I3', 'J3']
+      const headerCells = ['A3', 'B3', 'C3', 'D3', 'E3', 'F3', 'G3', 'H3', 'I3', 'J3', 'K3']
       headerCells.forEach(cell => {
         if (wsDetail[cell]) {
           wsDetail[cell].s = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "C00000" } }, alignment: { horizontal: 'center' } }
@@ -3137,7 +3850,7 @@ export default {
       const withMargin = data.totalCost * 1.15
       XLSX.writeFile(wb, `CHIFFRAGE_${this.project.name.replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`)
       
-      alert(`✅ Export Excel professionnel généré avec 6 feuilles\n\n📊 ${data.tasks.length} tâches\n⏱️ ${data.totalEstimatedTime}h (${(data.totalEstimatedTime / hoursPerDay).toFixed(1)}j)\n💰 ${data.totalCost.toFixed(2)}€\n📈 Avec marge 15% : ${withMargin.toFixed(2)}€`)
+      alert(`✅ Export Excel professionnel généré avec 6 feuilles\n\n📊 ${data.tasks.length} tâches\n🃏 ${totalStoryPoints} SP\n⏱️ ${data.totalEstimatedTime}h (${(data.totalEstimatedTime / hoursPerDay).toFixed(1)}j)\n💰 ${data.totalCost.toFixed(2)}€\n📈 Avec marge 15% : ${withMargin.toFixed(2)}€`)
     },
     getDifficultyLabel(difficulty) {
       const labels = {
@@ -3157,20 +3870,126 @@ export default {
       }
       return styles[difficulty] || { background: '#6c757d', color: 'white' }
     },
+    normalizeStoryPoints(value) {
+      if (value === '' || value === null || value === undefined) return null
+      const numeric = Number(value)
+      if (!Number.isFinite(numeric) || numeric < 0) return null
+      return numeric
+    },
+    storyPointsToEstimatedHours(storyPoints) {
+      const sp = this.normalizeStoryPoints(storyPoints)
+      if (sp === null) return 0
+
+      const planningPokerHoursMap = {
+        0.5: 1,
+        1: 2,
+        2: 4,
+        3: 6,
+        5: 10,
+        8: 16,
+        13: 26,
+        21: 42
+      }
+
+      const mapped = planningPokerHoursMap[sp]
+      if (Number.isFinite(mapped)) return mapped
+
+      // fallback linéaire prudent si valeur hors échelle
+      return Math.max(1, Math.round(sp * 2))
+    },
+    applyLocalTaskPlanningPokerEstimate() {
+      if (!this.localTaskForm?.isChiffrage) return
+      const sp = this.normalizeStoryPoints(this.localTaskForm.storyPoints)
+      this.localTaskForm.storyPoints = sp
+      if (sp !== null) {
+        this.localTaskForm.estimatedTime = this.storyPointsToEstimatedHours(sp)
+      }
+    },
     // === GESTION IA ===
+    loadAssistantAiConfig() {
+      try {
+        const raw = localStorage.getItem(AI_CONFIG_KEY)
+        if (!raw) return
+
+        const parsed = JSON.parse(raw)
+        this.assistantAiConfig = { ...this.assistantAiConfig, ...parsed }
+
+        if (this.assistantAiConfig.enabled && this.assistantAiConfig.strategy === 'llm') {
+          const mappedProvider = this.mapAssistantProviderToGeneratorProvider(this.assistantAiConfig.provider)
+          this.aiProvider = mappedProvider
+          if (mappedProvider !== 'ollama' && this.assistantAiConfig.apiKey) {
+            this.aiApiKey = this.assistantAiConfig.apiKey
+          }
+        }
+      } catch {
+        // Ignore erreurs de parsing de config
+      }
+    },
+    mapAssistantProviderToGeneratorProvider(provider) {
+      const normalized = String(provider || '').trim().toLowerCase()
+      if (normalized === 'gemini') return 'google'
+      if (normalized === 'mistral') return 'mistral'
+      if (normalized === 'github-copilot') return 'openai-compatible'
+      if (normalized === 'openai-compatible') return 'openai-compatible'
+      return 'openai-compatible'
+    },
+    getEffectiveAiConfig() {
+      const aiCfg = this.assistantAiConfig || {}
+      const useAssistant = aiCfg.enabled && aiCfg.strategy === 'llm' && aiCfg.provider
+
+      if (useAssistant) {
+        const provider = this.mapAssistantProviderToGeneratorProvider(aiCfg.provider)
+        return {
+          source: 'assistant',
+          provider,
+          apiKey: String(aiCfg.apiKey || '').trim(),
+          baseUrl: String(aiCfg.baseUrl || '').trim(),
+          model: String(aiCfg.model || '').trim(),
+          temperature: Number(aiCfg.temperature ?? 0.7),
+          systemPrompt: String(aiCfg.systemPrompt || '').trim()
+        }
+      }
+
+      const provider = this.aiProvider
+      const defaults = {
+        openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+        'openai-compatible': { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+        mistral: { baseUrl: 'https://api.mistral.ai/v1', model: 'mistral-small-latest' },
+        anthropic: { baseUrl: 'https://api.anthropic.com/v1', model: 'claude-3-5-sonnet-20241022' },
+        grok: { baseUrl: 'https://api.x.ai/v1', model: 'grok-beta' },
+        google: { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/models', model: 'gemini-2.0-flash' },
+        ollama: { baseUrl: 'http://localhost:11434', model: this.ollamaModel }
+      }
+
+      const fallback = defaults[provider] || defaults.openai
+
+      return {
+        source: 'legacy',
+        provider,
+        apiKey: String(this.aiApiKey || '').trim(),
+        baseUrl: fallback.baseUrl,
+        model: fallback.model,
+        temperature: 0.7,
+        systemPrompt: ''
+      }
+    },
     getProviderName() {
       const names = {
         openai: 'OpenAI',
+        'openai-compatible': 'OpenAI Compatible',
+        mistral: 'Mistral',
         anthropic: 'Anthropic Claude',
         google: 'Google Gemini',
         grok: 'Grok (xAI)',
         ollama: 'Ollama (Local)'
       }
-      return names[this.aiProvider] || 'OpenAI'
+      return names[this.effectiveAiProvider] || 'OpenAI'
     },
     getApiKeyPlaceholder() {
       const placeholders = {
         openai: 'sk-...',
+        'openai-compatible': 'sk-... ou github_pat_...',
+        mistral: 'votre-clé-mistral',
         anthropic: 'sk-ant-...',
         google: 'AIza...',
         grok: 'xai-...'
@@ -3227,7 +4046,7 @@ Pour chaque tâche, tu dois fournir :
 - description: description détaillée en HTML (avec balises <p>, <ul>, <li>, <strong>, etc.)
 ${this.aiOptions.assignLots ? '- lotNumber: numéro de lot logique (ex: LOT-001, LOT-002...)' : ''}
 ${this.aiOptions.estimateDifficulty ? '- difficulty: "easy", "medium", "hard" ou "expert"' : ''}
-${this.aiOptions.includeChiffrage && this.project?.chiffrageEnabled ? '- estimatedTime: temps estimé en heures (nombre décimal)' : ''}
+${this.aiOptions.includeChiffrage && this.project?.chiffrageEnabled ? '- storyPoints: estimation Scrum Planning Poker (valeurs Fibonacci: 0.5, 1, 2, 3, 5, 8, 13, 21)' : ''}
 - priority: "low", "medium" ou "high"
 
 Les tâches doivent être :
@@ -3239,69 +4058,30 @@ ${this.aiOptions.assignLots ? '- Groupées en lots fonctionnels cohérents' : ''
 Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
 
         let response, data, tasksText
+        const aiRuntime = this.getEffectiveAiConfig()
 
-        // Vérifier si le proxy est accessible (sauf pour Ollama qui est local)
-        if (this.aiProvider !== 'ollama') {
-          try {
-            const proxyCheck = await fetch('http://localhost:3001/api/ai/anthropic', { method: 'HEAD' })
-          } catch (e) {
-            throw new Error('❌ Proxy non accessible. Lancez "node proxy.js" dans un terminal séparé ou "npm run dev:full"')
-          }
-        }
-
-        // Appel selon le provider
-        if (this.aiProvider === 'openai') {
-          response = await fetch('http://localhost:3001/api/ai/openai', {
+        if (aiRuntime.provider === 'openai' || aiRuntime.provider === 'openai-compatible' || aiRuntime.provider === 'mistral' || aiRuntime.provider === 'grok') {
+          const baseUrl = String(aiRuntime.baseUrl || 'https://api.openai.com/v1').replace(/\/$/, '')
+          const model = String(aiRuntime.model || (aiRuntime.provider === 'mistral' ? 'mistral-small-latest' : 'gpt-4o-mini'))
+          response = await fetch(`${baseUrl}/chat/completions`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${this.aiApiKey}`
+              'Authorization': `Bearer ${aiRuntime.apiKey}`
             },
             body: JSON.stringify({
-              model: 'gpt-4o-mini',
+              model,
               messages: [
-                { role: 'system', content: systemPrompt },
+                { role: 'system', content: aiRuntime.systemPrompt ? `${aiRuntime.systemPrompt}\n\n${systemPrompt}` : systemPrompt },
                 { role: 'user', content }
               ],
-              temperature: 0.7
-            })
-          })
-
-          if (!response.ok) {
-            const error = await response.json()
-            throw new Error(error.error?.message || 'Erreur API OpenAI')
-          }
-
-          data = await response.json()
-          console.log('Réponse OpenAI:', data)
-          
-          if (!data.choices || !data.choices[0] || !data.choices[0].message) {
-            console.error('Structure de réponse invalide:', data)
-            throw new Error(`Structure de réponse invalide. Réponse: ${JSON.stringify(data).substring(0, 200)}`)
-          }
-          
-          tasksText = data.choices[0].message.content.trim()
-
-        } else if (this.aiProvider === 'grok') {
-          response = await fetch('http://localhost:3001/api/ai/grok', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${this.aiApiKey}`
-            },
-            body: JSON.stringify({
-              model: 'grok-beta',
-              messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content }
-              ],
-              temperature: 0.7
+              temperature: Number.isFinite(aiRuntime.temperature) ? aiRuntime.temperature : 0.7
             })
           })
 
           if (!response.ok) {
             const text = await response.text()
-            let errorMsg = 'Erreur API Grok'
+            let errorMsg = 'Erreur API LLM'
             try {
               const error = JSON.parse(text)
               errorMsg = error.error?.message || errorMsg
@@ -3312,7 +4092,7 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
           }
 
           data = await response.json()
-          console.log('Réponse Grok:', data)
+          console.log('Réponse LLM:', data)
           
           if (!data.choices || !data.choices[0] || !data.choices[0].message) {
             console.error('Structure de réponse invalide:', data)
@@ -3321,20 +4101,21 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
           
           tasksText = data.choices[0].message.content.trim()
 
-        } else if (this.aiProvider === 'anthropic') {
-          response = await fetch('http://localhost:3001/api/ai/anthropic', {
+        } else if (aiRuntime.provider === 'anthropic') {
+          response = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${this.aiApiKey}`
+              'x-api-key': aiRuntime.apiKey,
+              'anthropic-version': '2023-06-01'
             },
             body: JSON.stringify({
-              model: 'claude-3-5-sonnet-20241022',
+              model: aiRuntime.model || 'claude-3-5-sonnet-20241022',
               max_tokens: 8000,
               messages: [
                 {
                   role: 'user',
-                  content: `${systemPrompt}\n\n${content}`
+                  content: `${aiRuntime.systemPrompt ? `${aiRuntime.systemPrompt}\n\n` : ''}${systemPrompt}\n\n${content}`
                 }
               ]
             })
@@ -3362,20 +4143,24 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
           
           tasksText = data.content[0].text.trim()
 
-        } else if (this.aiProvider === 'google') {
-          response = await fetch(`http://localhost:3001/api/ai/google?key=${this.aiApiKey}`, {
+        } else if (aiRuntime.provider === 'google') {
+          const model = aiRuntime.model || 'gemini-2.0-flash'
+          response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(aiRuntime.apiKey)}`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
+              systemInstruction: {
+                parts: [{ text: aiRuntime.systemPrompt ? `${aiRuntime.systemPrompt}\n\n${systemPrompt}` : systemPrompt }]
+              },
               contents: [{
                 parts: [{
-                  text: `${systemPrompt}\n\n${content}`
+                  text: content
                 }]
               }],
               generationConfig: {
-                temperature: 0.7,
+                temperature: Number.isFinite(aiRuntime.temperature) ? aiRuntime.temperature : 0.7,
                 maxOutputTokens: 4096
               }
             })
@@ -3387,9 +4172,13 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
           }
 
           data = await response.json()
-          tasksText = data.candidates[0].content.parts[0].text.trim()
+          const candidate = data?.candidates?.[0]
+          tasksText = candidate?.content?.parts?.[0]?.text?.trim()
+          if (!tasksText) {
+            throw new Error('Réponse Gemini vide ou invalide')
+          }
 
-        } else if (this.aiProvider === 'ollama') {
+        } else if (aiRuntime.provider === 'ollama') {
           localStorage.setItem('ollama_model', this.ollamaModel)
           
           response = await fetch('http://localhost:11434/api/generate', {
@@ -3399,10 +4188,10 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
             },
             body: JSON.stringify({
               model: this.ollamaModel,
-              prompt: `${systemPrompt}\n\n${content}`,
+              prompt: `${aiRuntime.systemPrompt ? `${aiRuntime.systemPrompt}\n\n` : ''}${systemPrompt}\n\n${content}`,
               stream: false,
               options: {
-                temperature: 0.7
+                temperature: Number.isFinite(aiRuntime.temperature) ? aiRuntime.temperature : 0.7
               }
             })
           })
@@ -3420,6 +4209,8 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
           }
           
           tasksText = data.response.trim()
+        } else {
+          throw new Error(`Provider IA non supporté pour le chiffrage: ${aiRuntime.provider}`)
         }
         
         // Parser le JSON (enlever les markdown code blocks si présents)
@@ -3432,7 +4223,15 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
         }
 
         // Formater les tâches
-        this.generatedTasks = tasks.map(task => ({
+        this.generatedTasks = tasks.map(task => {
+          const normalizedStoryPoints = this.aiOptions.includeChiffrage && this.project?.chiffrageEnabled
+            ? this.normalizeStoryPoints(task.storyPoints)
+            : null
+          const estimatedTime = normalizedStoryPoints !== null
+            ? this.storyPointsToEstimatedHours(normalizedStoryPoints)
+            : (task.estimatedTime || 0)
+
+          return {
           title: task.title || '',
           description: task.description || '',
           status: 'todo',
@@ -3440,10 +4239,12 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
           isChiffrage: this.aiOptions.includeChiffrage && this.project?.chiffrageEnabled,
           lotNumber: task.lotNumber || '',
           difficulty: task.difficulty || 'medium',
-          estimatedTime: task.estimatedTime || 0
-        }))
+          storyPoints: normalizedStoryPoints,
+          estimatedTime
+          }
+        })
 
-        alert(`✨ ${this.generatedTasks.length} tâche(s) générée(s) avec succès !`)
+        alert(`✨ ${this.generatedTasks.length} tâche(s) générée(s) en prévisualisation. Cliquez sur "Créer toutes les tâches" pour les enregistrer.`)
 
       } catch (error) {
         console.error('Erreur génération IA:', error)
@@ -3456,7 +4257,13 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
       if (this.generatedTasks.length === 0) return
 
       try {
+        const count = this.generatedTasks.length
         for (const task of this.generatedTasks) {
+          const normalizedStoryPoints = this.normalizeStoryPoints(task.storyPoints)
+          const estimatedTime = normalizedStoryPoints !== null
+            ? this.storyPointsToEstimatedHours(normalizedStoryPoints)
+            : task.estimatedTime
+
           await db.addLocalTask({
             projectId: this.project.id,
             title: task.title,
@@ -3467,11 +4274,14 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
             isChiffrage: task.isChiffrage,
             lotNumber: task.lotNumber,
             difficulty: task.difficulty,
-            estimatedTime: task.estimatedTime
+            storyPoints: normalizedStoryPoints,
+            estimatedTime
           })
         }
 
         await this.loadLocalTasks()
+        this.projectContentView = 'tasks'
+        this.localTaskDisplayMode = 'list'
         this.generatedTasks = []
         this.showAiTaskGenerator = false
         this.aiPrompt = ''
@@ -3479,11 +4289,18 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
         this.uploadedFileName = ''
         this.uploadedFileContent = ''
 
-        alert(`✅ ${this.generatedTasks.length} tâche(s) enregistrée(s) !`)
+        alert(`✅ ${count} tâche(s) créée(s) et enregistrée(s) dans les tâches locales.`)
       } catch (error) {
         console.error('Erreur sauvegarde:', error)
         alert(`❌ Erreur lors de la sauvegarde: ${error.message}`)
       }
+    },
+    closeAiTaskGenerator() {
+      if (this.generatedTasks.length > 0) {
+        const confirmed = confirm('Vous avez des tâches générées non enregistrées. Voulez-vous fermer sans les créer ?')
+        if (!confirmed) return
+      }
+      this.showAiTaskGenerator = false
     },
     getStatusClass(status) {
       const classes = {
@@ -3774,8 +4591,19 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
         return
       }
 
+      const normalizedStoryPoints = this.localTaskForm.isChiffrage
+        ? this.normalizeStoryPoints(this.localTaskForm.storyPoints)
+        : null
+
+      const computedEstimatedTime = (this.localTaskForm.isChiffrage && normalizedStoryPoints !== null)
+        ? this.storyPointsToEstimatedHours(normalizedStoryPoints)
+        : this.localTaskForm.estimatedTime
+
       const payload = {
         ...this.localTaskForm,
+        syncMode: this.localTaskForm.odooTaskId ? 'odoo' : (this.localTaskForm.syncMode || 'local'),
+        storyPoints: normalizedStoryPoints,
+        estimatedTime: computedEstimatedTime,
         sprintId,
         startDate: this.localTaskForm.startDate ? this.toDateOnlyString(this.localTaskForm.startDate) : null
       }
@@ -3784,12 +4612,29 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
         // Mise à jour d'une tâche existante
         await db.updateLocalTask(this.localTaskForm.id, payload)
       } else {
+        let createdOdooTaskId = null
+        if (this.localTaskFormOptions.syncToOdoo && this.project?.odooId && this.odooConfigured) {
+          createdOdooTaskId = await odooService.createProjectTask(
+            this.project.odooId,
+            payload.title,
+            payload.description || '',
+            payload.priority || 'medium'
+          )
+        }
+
         // Création d'une nouvelle tâche
         await db.addLocalTask({
           ...payload,
           assignedUserId: this.localTaskForm.assignedUserId ?? this.currentUserId,
-          projectId: this.project.id
+          projectId: this.project.id,
+          syncMode: createdOdooTaskId ? 'odoo' : 'local',
+          odooTaskId: createdOdooTaskId,
+          syncedAt: createdOdooTaskId ? new Date().toISOString() : null
         })
+
+        if (createdOdooTaskId) {
+          await this.syncOdooTasksForProject()
+        }
       }
       await this.loadLocalTasks()
       this.cancelLocalTaskForm()
@@ -3800,11 +4645,16 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
       const defaultStatus = columns[0]?.id || 'todo'
       this.showLocalTaskForm = true
       this.localTaskFormOptions = {
-        addToCurrentSprint: !!activeSprint
+        addToCurrentSprint: !!activeSprint,
+        syncToOdoo: false
       }
       this.localTaskForm = {
         ...this.localTaskForm,
         status: defaultStatus,
+        syncMode: this.localTaskForm.syncMode || 'local',
+        odooTaskId: this.localTaskForm.odooTaskId || null,
+        syncedAt: this.localTaskForm.syncedAt || null,
+        storyPoints: this.normalizeStoryPoints(this.localTaskForm.storyPoints),
         sprintId: this.localTaskForm.sprintId ?? (activeSprint?.id || null),
         startDate: this.localTaskForm.startDate || new Date().toISOString().split('T')[0],
         assignedUserId: this.localTaskForm.assignedUserId ?? this.currentUserId
@@ -3816,7 +4666,8 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
       const defaultStatus = columns[0]?.id || 'todo'
       this.showLocalTaskForm = false
       this.localTaskFormOptions = {
-        addToCurrentSprint: false
+        addToCurrentSprint: false,
+        syncToOdoo: false
       }
       this.localTaskForm = {
         title: '',
@@ -3824,18 +4675,23 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
         status: defaultStatus,
         priority: 'medium',
         sprintId: activeSprint?.id || null,
+        syncMode: 'local',
+        odooTaskId: null,
+        syncedAt: null,
         startDate: new Date().toISOString().split('T')[0],
         assignedUserId: this.currentUserId,
         isChiffrage: false,
         lotNumber: '',
         difficulty: '',
+        storyPoints: null,
         estimatedTime: 0,
         attachments: []
       }
     },
     async editLocalTask(task) {
       this.localTaskFormOptions = {
-        addToCurrentSprint: false
+        addToCurrentSprint: false,
+        syncToOdoo: task.syncMode === 'odoo' || !!task.odooTaskId
       }
       const columns = this.effectiveColumns
       // Si le statut actuel de la tâche ne correspond à aucune colonne du projet,
@@ -3845,6 +4701,10 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
       this.localTaskForm = {
         ...task,
         status: normalizedStatus,
+        syncMode: task.syncMode || (task.odooTaskId ? 'odoo' : 'local'),
+        odooTaskId: task.odooTaskId || null,
+        syncedAt: task.syncedAt || null,
+        storyPoints: this.normalizeStoryPoints(task.storyPoints),
         startDate: task.startDate || new Date().toISOString().split('T')[0],
         assignedUserId: task.assignedUserId ?? null
       }
@@ -3928,6 +4788,62 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
     closeAttachmentPreview() {
       this.showAttachmentPreview = false
       this.currentAttachment = null
+    },
+    closeCommitPreview() {
+      this.showCommitPreview = false
+      this.commitPreviewLoading = false
+      this.commitPreviewError = ''
+      this.currentCommitPreview = null
+    },
+    async previewGithubCommit(commit) {
+      if (!this.projectGithubRef || !commit?.sha) return
+
+      this.showCommitPreview = true
+      this.commitPreviewLoading = true
+      this.commitPreviewError = ''
+      this.currentCommitPreview = {
+        sha: commit.sha,
+        message: commit.message,
+        author: commit.author,
+        date: commit.date,
+        htmlUrl: commit.htmlUrl,
+        files: []
+      }
+
+      try {
+        const token = String(this.projectGithubTokenInput || '').trim() || undefined
+        const details = await fetchGithubCommitDetails(this.projectGithubRef, commit.sha, token)
+        this.currentCommitPreview = details
+      } catch (error) {
+        this.commitPreviewError = error?.message || 'Impossible de charger les modifications GitHub'
+      } finally {
+        this.commitPreviewLoading = false
+      }
+    },
+    async previewGitlabCommit(commit) {
+      if (!this.projectGitlabRef || !commit?.sha) return
+
+      this.showCommitPreview = true
+      this.commitPreviewLoading = true
+      this.commitPreviewError = ''
+      this.currentCommitPreview = {
+        sha: commit.sha,
+        message: commit.message,
+        author: commit.author,
+        date: commit.date,
+        htmlUrl: commit.htmlUrl,
+        files: []
+      }
+
+      try {
+        const token = String(this.projectGitlabTokenInput || '').trim() || undefined
+        const details = await fetchGitlabCommitDetails(this.projectGitlabRef, commit.sha, token)
+        this.currentCommitPreview = details
+      } catch (error) {
+        this.commitPreviewError = error?.message || 'Impossible de charger les modifications GitLab'
+      } finally {
+        this.commitPreviewLoading = false
+      }
     },
     downloadAttachment(attachment) {
       const link = document.createElement('a')
@@ -4385,6 +5301,47 @@ Retourne UNIQUEMENT un tableau JSON valide sans texte additionnel.`
 .preview-download {
   text-align: center;
   padding: 2rem;
+}
+
+.commit-preview-modal {
+  max-width: 1100px;
+}
+
+.commit-preview-files {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.commit-preview-file {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.commit-preview-file-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 0.9rem;
+  background: #f8fafc;
+  border-bottom: 1px solid #e5e7eb;
+  flex-wrap: wrap;
+}
+
+.commit-preview-patch {
+  margin: 0;
+  padding: 0.9rem;
+  max-height: 420px;
+  overflow: auto;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
 }
 
 /* Vue pièces jointes */

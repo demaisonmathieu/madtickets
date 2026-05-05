@@ -23,6 +23,24 @@ export interface GithubCommitItem {
   htmlUrl: string
 }
 
+export interface GithubCommitFileChange {
+  filename: string
+  status: string
+  additions: number
+  deletions: number
+  changes: number
+  patch?: string
+}
+
+export interface GithubCommitDetails {
+  sha: string
+  message: string
+  author: string
+  date: string
+  htmlUrl: string
+  files: GithubCommitFileChange[]
+}
+
 export interface GithubBranchItem {
   name: string
   protected?: boolean
@@ -205,4 +223,37 @@ export async function createGithubBranch(
   )
 
   return `https://github.com/${ref.owner}/${ref.repo}/tree/${encodeURIComponent(safeBranchName)}`
+}
+
+export async function fetchGithubCommitDetails(
+  ref: GithubRepoRef,
+  sha: string,
+  token?: string
+): Promise<GithubCommitDetails> {
+  const safeSha = String(sha || '').trim()
+  if (!safeSha) {
+    throw new Error('SHA GitHub invalide')
+  }
+
+  const commit = await githubRequest<any>(
+    `/repos/${encodeURIComponent(ref.owner)}/${encodeURIComponent(ref.repo)}/commits/${encodeURIComponent(safeSha)}`,
+    token,
+    { method: 'GET' }
+  )
+
+  return {
+    sha: String(commit?.sha || safeSha),
+    message: String(commit?.commit?.message || '').trim(),
+    author: String(commit?.commit?.author?.name || commit?.author?.login || 'Unknown'),
+    date: String(commit?.commit?.author?.date || ''),
+    htmlUrl: String(commit?.html_url || `https://github.com/${ref.owner}/${ref.repo}/commit/${safeSha}`),
+    files: (commit?.files || []).map((file: any) => ({
+      filename: String(file?.filename || ''),
+      status: String(file?.status || ''),
+      additions: Number(file?.additions || 0),
+      deletions: Number(file?.deletions || 0),
+      changes: Number(file?.changes || 0),
+      patch: file?.patch ? String(file.patch) : ''
+    }))
+  }
 }

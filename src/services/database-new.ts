@@ -247,6 +247,9 @@ export interface LocalTask {
   sprintId?: number | null;
   recetteId?: number | null;
   stageId?: number | null;
+  syncMode?: 'local' | 'odoo';
+  odooTaskId?: number | null;
+  syncedAt?: string | null;
   title: string;
   description?: string;
   status: string;
@@ -258,6 +261,7 @@ export interface LocalTask {
   isChiffrage?: boolean;
   lotNumber?: string;
   difficulty?: string;
+  storyPoints?: number | null;
   estimatedTime?: number;
   attachments?: Attachment[];
   ganttAssignments?: GanttAssignment[];
@@ -384,9 +388,18 @@ class DatabaseService {
     const normalizedProject = this.normalizeProject(project);
     if (!normalizedProject) return false;
 
-    // Le backend est la source de vérité pour l'accès.
-    // Éviter le filtrage côté frontend pour ne pas masquer les données.
-    return true;
+    const session = this.getCurrentSession();
+    if (session?.role === 'admin') return true;
+
+    const sessionUserId = Number(session?.userId);
+    if (!Number.isFinite(sessionUserId) || sessionUserId <= 0) return false;
+
+    const followerUserIds = this.normalizeFollowerUserIds(
+      normalizedProject.followerUserIds,
+      normalizedProject.assignedUserId
+    );
+
+    return followerUserIds.includes(sessionUserId);
   }
 
   protected filterProjectsForCurrentUser(projects: Project[]): Project[] {
@@ -394,8 +407,7 @@ class DatabaseService {
       .map(project => this.normalizeProject(project))
       .filter((project): project is Project => Boolean(project));
 
-    // Éviter tout filtrage client qui peut provoquer des listes vides.
-    return normalizedProjects;
+    return normalizedProjects.filter(project => this.canAccessProjectRecord(project));
   }
 
   protected ensureAccessibleProject(project?: Project | null): Project {

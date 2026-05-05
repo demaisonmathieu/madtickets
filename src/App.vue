@@ -61,6 +61,50 @@
     <main class="container">
       <router-view />
     </main>
+
+    <div v-if="!isLoginPage && currentUser" class="ai-chatter-wrapper">
+      <button class="ai-chatter-toggle" @click="toggleAiChatter" :title="aiChatterOpen ? 'Fermer l\'assistant IA' : 'Ouvrir l\'assistant IA'">
+        {{ aiChatterOpen ? '✖' : '🤖' }}
+      </button>
+
+      <div v-if="aiChatterOpen" class="ai-chatter-panel">
+        <div class="ai-chatter-header">
+          <strong>Assistant IA</strong>
+          <span class="ai-chatter-sub">KPI • recherche • actions de masse</span>
+        </div>
+
+        <div class="ai-chatter-messages">
+          <div v-for="message in aiChatterMessages" :key="message.id" :class="['ai-msg', `ai-msg-${message.role}`]">
+            <div class="ai-msg-bubble">{{ message.text }}</div>
+          </div>
+          <div v-if="aiChatterLoading" class="ai-msg ai-msg-assistant">
+            <div class="ai-msg-bubble">⏳ Traitement…</div>
+          </div>
+        </div>
+
+        <div class="ai-chatter-options">
+          <label><input type="checkbox" v-model="aiChatterDryRun" /> Simulation</label>
+          <label><input type="checkbox" v-model="aiChatterAllowMutations" /> Mutations</label>
+          <input
+            v-if="aiChatterAllowMutations"
+            v-model="aiChatterConfirmText"
+            placeholder="CONFIRMER"
+            class="ai-chatter-confirm"
+          />
+        </div>
+
+        <div class="ai-chatter-input-row">
+          <textarea
+            v-model="aiChatterPrompt"
+            class="ai-chatter-input"
+            rows="2"
+            placeholder="Ex: Donne les KPI tickets en retard"
+            @keydown.enter.exact.prevent="sendAiChatterPrompt"
+          />
+          <button class="btn btn-primary" :disabled="aiChatterLoading || !aiChatterPrompt.trim()" @click="sendAiChatterPrompt">Envoyer</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -68,6 +112,10 @@
 import PWAStatus from './components/PWAStatus.vue'
 import { db } from './services/database-new'
 import { auth } from './services/auth'
+import { apiFetch } from './services/api'
+
+const AI_CONFIG_KEY = 'app-ai-assistant-config'
+const AI_CHATTER_CONVERSATION_KEY = 'app-ai-chatter-conversation-id'
 
 export default {
   name: 'App',
@@ -92,6 +140,24 @@ export default {
         label: '',
         to: ''
       },
+      aiChatterOpen: false,
+      aiChatterLoading: false,
+      aiChatterPrompt: '',
+      aiChatterMessages: [],
+      aiChatterDryRun: true,
+      aiChatterAllowMutations: false,
+      aiChatterConfirmText: '',
+      aiChatterConversationId: '',
+      aiAgentConfig: {
+        enabled: true,
+        strategy: 'llm',
+        provider: 'mistral',
+        baseUrl: 'https://api.mistral.ai/v1',
+        apiKey: '',
+        model: 'mistral-small-latest',
+        temperature: 0.1,
+        systemPrompt: 'Tu es un assistant de gestion de tickets. Réponds en français, clairement et de manière actionnable.'
+      },
       menuItems: [
         { id: 'dashboard', type: 'link', label: '📊 Dashboard', to: '/dashboard' },
         { id: 'gantt-users', type: 'link', label: '🗓️ Gantt Utilisateurs', to: '/gantt-users' },
@@ -107,6 +173,7 @@ export default {
             { id: 'tasks', label: '✅ Tâches Odoo', to: '/tasks', odooOnly: true }
           ]
         },
+        { id: 'ai-assistant', type: 'link', label: '🤖 Assistant IA', to: '/ai-assistant' },
         { id: 'recettes', type: 'link', label: '🧪 Recettes', to: '/recettes' },
         { id: 'documents', type: 'link', label: '📁 Documents', to: '/documents' },
         { id: 'passwords', type: 'link', label: '🔐 Mots de passe', to: '/passwords' },
@@ -175,6 +242,8 @@ export default {
   async mounted() {
     await this.loadMenuPreferences()
     this.odooEnabled = localStorage.getItem('app-odoo-enabled') !== 'false'
+    this.loadAiAgentConfig()
+    this.aiChatterConversationId = this.getOrCreateConversationId(AI_CHATTER_CONVERSATION_KEY)
     window.addEventListener('odoo-enabled-changed', (e) => {
       this.odooEnabled = e.detail
     })
@@ -183,6 +252,194 @@ export default {
     }
   },
   methods: {
+    getOrCreateConversationId(storageKey) {
+      const key = String(storageKey || '').trim()
+      if (!key) return ''
+
+      try {
+        const existing = localStorage.getItem(key)
+        if (existing && String(existing).trim()) return String(existing).trim()
+
+        const generated = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+        localStorage.setItem(key, generated)
+        return generated
+      } catch {
+        return `conv-${Date.now()}`
+      }
+    },
+    loadAiAgentConfig() {
+      try {
+        const raw = localStorage.getItem(AI_CONFIG_KEY)
+        if (!raw) return
+        const parsed = JSON.parse(raw)
+        this.aiAgentConfig = { ...this.aiAgentConfig, ...parsed }
+      } catch {
+        // ignore erreurs de config
+      }
+    },
+    toggleAiChatter() {
+      this.aiChatterOpen = !this.aiChatterOpen
+      if (this.aiChatterOpen && this.aiChatterMessages.length === 0) {
+        this.aiChatterMessages.push({
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          text: 'Bonjour 👋 Je peux calculer des KPI, faire des recherches intelligentes et préparer des actions de masse.'
+        })
+      }
+    },
+    buildAiChatterSummary(response) {
+      const chunks = []
+
+      const rendering = response?.rendering && typeof response.rendering === 'object'
+        ? response.rendering
+        : null
+
+      if (rendering?.summary) {
+        chunks.push(`🧠 ${String(rendering.summary).trim()}`)
+      }
+
+      if (Array.isArray(rendering?.highlights) && rendering.highlights.length > 0) {
+        chunks.push(`✨ Points clés\n${rendering.highlights.map(item => `• ${item}`).join('\n')}`)
+      }
+
+      if (Array.isArray(rendering?.nextActions) && rendering.nextActions.length > 0) {
+        chunks.push(`🎯 Actions\n${rendering.nextActions.map(item => `• ${item}`).join('\n')}`)
+      }
+
+      if (Array.isArray(rendering?.warnings) && rendering.warnings.length > 0) {
+        chunks.push(`⚠️ Attention\n${rendering.warnings.map(item => `• ${item}`).join('\n')}`)
+      }
+
+      if (response?.answer) {
+        chunks.push(`🧠 ${String(response.answer).trim()}`)
+      }
+
+      const kpis = Array.isArray(response?.kpiResults) ? response.kpiResults : []
+      if (kpis.length > 0) {
+        const kpiText = kpis
+          .map(kpi => {
+            const metricLabel = kpi.metric === 'count' ? 'total' : `somme ${kpi.field || ''}`
+            return `• ${this.formatAiEntityLabel(kpi.entity)} — ${metricLabel}: ${kpi.value}`
+          })
+          .join('\n')
+        chunks.push(`📊 KPI\n${kpiText}`)
+      }
+
+      const searchResults = Array.isArray(response?.searchResults) ? response.searchResults : []
+      if (searchResults.length > 0) {
+        const total = Number(response?.searchTotal)
+        const searchEntity = this.formatAiEntityLabel(response?.plan?.search?.entity)
+        if (Number.isFinite(total) && total > searchResults.length) {
+          chunks.push(`🔎 ${searchEntity}: ${total} trouvé(s), ${searchResults.length} affiché(s).`)
+        } else {
+          chunks.push(`🔎 ${searchEntity}: ${searchResults.length} résultat(s).`)
+        }
+
+        const preview = searchResults
+          .slice(0, 8)
+          .map((row, idx) => `• ${idx + 1}. ${this.formatAiRowPreview(row)}`)
+          .join('\n')
+
+        if (preview) {
+          chunks.push(`🧾 Aperçu\n${preview}`)
+        }
+      }
+
+      const mutations = Array.isArray(response?.mutationResults) ? response.mutationResults : []
+      if (mutations.length > 0) {
+        const mutationText = mutations
+          .map(m => `• ${m.action} sur ${this.formatAiEntityLabel(m.entity)}: ${m.affected} ligne(s)${m.dryRun ? ' (simulation)' : ''}`)
+          .join('\n')
+        chunks.push(`⚙️ Mutations\n${mutationText}`)
+      }
+
+      if (response?.requiresConfirmation) {
+        chunks.push(response.confirmationMessage || 'Confirmation requise pour exécuter les mutations.')
+      }
+
+      return chunks.filter(Boolean).join('\n\n') || 'Analyse terminée.'
+    },
+    formatAiEntityLabel(entity) {
+      const map = {
+        tickets: 'Tickets',
+        projects: 'Projets',
+        local_tasks: 'Tâches',
+        todos: 'Todos',
+        sprints: 'Sprints',
+        time_entries: 'Temps passés'
+      }
+      return map[String(entity || '').toLowerCase()] || String(entity || 'Données')
+    },
+    formatAiRowPreview(row) {
+      if (!row || typeof row !== 'object') return '—'
+
+      const id = row.id != null ? `#${row.id}` : null
+      const title = row.title || row.name || row.text || null
+      const status = row.status ? `statut: ${row.status}` : null
+      const priority = row.priority ? `priorité: ${row.priority}` : null
+      const project = row.project_id != null ? `projet: ${row.project_id}` : null
+      const created = row.created_at ? `créé: ${this.formatAiDate(row.created_at)}` : null
+
+      return [id, title, status, priority, project, created]
+        .filter(Boolean)
+        .join(' • ')
+    },
+    formatAiDate(value) {
+      const d = new Date(value)
+      if (Number.isNaN(d.getTime())) return String(value)
+      return d.toLocaleDateString('fr-FR')
+    },
+    async sendAiChatterPrompt() {
+      const prompt = String(this.aiChatterPrompt || '').trim()
+      if (!prompt || this.aiChatterLoading) return
+
+      this.loadAiAgentConfig()
+
+      this.aiChatterMessages.push({ id: `user-${Date.now()}`, role: 'user', text: prompt })
+      this.aiChatterPrompt = ''
+
+      const cfg = this.aiAgentConfig || {}
+      const llmReady = !!(cfg.enabled && cfg.strategy === 'llm' && cfg.apiKey && cfg.model && (cfg.provider === 'gemini' || cfg.baseUrl))
+      if (!llmReady) {
+        this.aiChatterMessages.push({
+          id: `assistant-${Date.now()}-cfg`,
+          role: 'assistant',
+          text: 'Configuration IA incomplète. Configurez l\'Assistant IA dans Administration (mode LLM + API key).'
+        })
+        return
+      }
+
+      try {
+        this.aiChatterLoading = true
+        const response = await apiFetch('/ai/agent', {
+          method: 'POST',
+          timeoutMs: 60000,
+          body: JSON.stringify({
+            prompt,
+            config: cfg,
+            renderMode: 'on',
+            conversationId: this.aiChatterConversationId,
+            dryRun: this.aiChatterDryRun,
+            allowMutations: this.aiChatterAllowMutations,
+            confirmText: this.aiChatterConfirmText,
+          })
+        })
+
+        this.aiChatterMessages.push({
+          id: `assistant-${Date.now()}-resp`,
+          role: 'assistant',
+          text: this.buildAiChatterSummary(response)
+        })
+      } catch (error) {
+        this.aiChatterMessages.push({
+          id: `assistant-${Date.now()}-err`,
+          role: 'assistant',
+          text: `Erreur: ${error?.message || 'Erreur agent IA'}`
+        })
+      } finally {
+        this.aiChatterLoading = false
+      }
+    },
     isDropdownItem(item) {
       if (!item) return false
       if (item.type === 'projects-dropdown' || item.type === 'sprints-dropdown' || item.type === 'custom-dropdown') {
@@ -931,5 +1188,133 @@ body {
 .badge-danger {
   background: #e74c3c;
   color: white;
+}
+
+.ai-chatter-wrapper {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 1400;
+}
+
+.ai-chatter-toggle {
+  width: 54px;
+  height: 54px;
+  border-radius: 999px;
+  border: none;
+  background: #4DBA87;
+  color: #fff;
+  font-size: 1.25rem;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+}
+
+.ai-chatter-panel {
+  width: min(92vw, 400px);
+  height: min(70vh, 560px);
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.22);
+  margin-bottom: 0.7rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ai-chatter-header {
+  padding: 0.75rem 0.9rem;
+  border-bottom: 1px solid #eef2f7;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+}
+
+.ai-chatter-sub {
+  color: #64748b;
+  font-size: 0.8rem;
+  margin-top: 0.2rem;
+}
+
+.ai-chatter-messages {
+  flex: 1;
+  overflow: auto;
+  padding: 0.8rem;
+  background: #f8fafc;
+}
+
+.ai-msg {
+  display: flex;
+  margin-bottom: 0.55rem;
+}
+
+.ai-msg-user {
+  justify-content: flex-end;
+}
+
+.ai-msg-assistant {
+  justify-content: flex-start;
+}
+
+.ai-msg-bubble {
+  max-width: 90%;
+  white-space: pre-wrap;
+  border-radius: 12px;
+  padding: 0.55rem 0.7rem;
+  font-size: 0.88rem;
+}
+
+.ai-msg-user .ai-msg-bubble {
+  background: #4DBA87;
+  color: #fff;
+}
+
+.ai-msg-assistant .ai-msg-bubble {
+  background: #fff;
+  color: #1f2937;
+  border: 1px solid #e5e7eb;
+}
+
+.ai-chatter-options {
+  padding: 0.55rem 0.75rem;
+  border-top: 1px solid #eef2f7;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.ai-chatter-options label {
+  font-size: 0.8rem;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.ai-chatter-confirm {
+  padding: 0.3rem 0.45rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  min-width: 110px;
+}
+
+.ai-chatter-input-row {
+  padding: 0.65rem;
+  border-top: 1px solid #eef2f7;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.5rem;
+  background: #fff;
+}
+
+.ai-chatter-input {
+  width: 100%;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+  resize: none;
+  font-family: inherit;
 }
 </style>
