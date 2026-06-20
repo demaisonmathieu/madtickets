@@ -62,6 +62,7 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,ttf,eot,woff}'],
+        navigateFallbackDenylist: [/^\/madcook\//],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/vps-48aa0bd2\.vps\.ovh\.net\/api\/.*/,
