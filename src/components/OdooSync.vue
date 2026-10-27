@@ -175,7 +175,7 @@
         <div class="sync-item">
           <div class="sync-info">
             <h4>📁 Projets</h4>
-            <p>Importer tous les projets et leurs étapes depuis Odoo</p>
+            <p>Mettre à jour les projets suivis et leurs étapes depuis Odoo</p>
           </div>
           <button 
             @click="syncProjects" 
@@ -534,16 +534,17 @@ export default {
       this.syncStatus = null
       
       try {
-        const odooProjects = await odooService.getProjects()
-        console.log('[Sync] Projets Odoo récupérés:', odooProjects.length)
-        console.log('[Sync] Premier projet Odoo:', odooProjects[0])
-        
-        // Importer les projets
+        // Seuls les projets ajoutés volontairement (via "Ajouter un projet Odoo") sont rafraîchis
+        const trackedProjects = (await db.getAllProjects()).filter(p => p.odooId)
+        const odooProjects = await odooService.getProjects(trackedProjects.map(p => p.odooId))
+
         let imported = 0
         for (const odooProject of odooProjects) {
-          console.log('[Sync] Import projet:', { name: odooProject.name, odooId: odooProject.odooId })
-
-          let projectPayload = { ...odooProject }
+          const existing = trackedProjects.find(p => p.odooId === odooProject.odooId)
+          const projectPayload = {
+            ...odooProject,
+            clientName: existing.clientName || odooProject.clientName
+          }
           try {
             const stageColumns = await odooService.getProjectStages(odooProject.odooId)
             if (Array.isArray(stageColumns) && stageColumns.length > 0) {
@@ -552,29 +553,15 @@ export default {
           } catch (stageError) {
             console.warn('[Sync] Étapes projet non récupérées:', odooProject.odooId, stageError)
           }
-          
-          // Vérifier si le projet existe déjà (par odooId)
-          const allProjects = await db.getAllProjects()
-          const existing = allProjects.find(p => p.odooId === odooProject.odooId)
-          
-          if (existing) {
-            console.log('[Sync] Mise à jour projet existant:', existing.id)
-            await db.updateProject(existing.id, projectPayload)
-          } else {
-            console.log('[Sync] Création nouveau projet')
-            const projectId = await db.addProject(projectPayload)
-            console.log('[Sync] Projet créé avec ID:', projectId)
-            
-            // Vérifier que le projet a bien été créé avec odooId
-            const createdProject = await db.getProject(projectId)
-            console.log('[Sync] Projet créé vérifié:', createdProject)
-          }
+          await db.updateProject(existing.id, projectPayload)
           imported++
         }
-        
+
         this.syncStatus = {
           type: 'success',
-          message: `✅ ${imported} projet(s) synchronisé(s) avec succès`
+          message: trackedProjects.length
+            ? `✅ ${imported} projet(s) suivi(s) mis à jour`
+            : 'ℹ️ Aucun projet suivi. Ajoutez-en depuis "Mes Projets" → "Ajouter un projet Odoo".'
         }
         
         this.updateStats(imported, 0)

@@ -15,9 +15,12 @@ export interface OdooProject {
   active: boolean;
   stage_id?: [number, string] | false;
   user_id?: [number, string] | false;
+  partner_id?: [number, string] | false;
   date_start?: string;
   date?: string;
 }
+
+const PROJECT_FIELDS = ['id', 'name', 'description', 'active', 'stage_id', 'user_id', 'partner_id', 'date_start', 'date'];
 
 export interface OdooTicket {
   id: number;
@@ -62,6 +65,7 @@ export interface MappedProject {
   odooId: number;
   name: string;
   description: string;
+  clientName: string;
   status: 'active' | 'completed' | 'on-hold';
   createdAt: string;
   updatedAt: string;
@@ -775,36 +779,46 @@ class OdooService {
     return Array.isArray(result) ? result : [];
   }
 
-  async getProjects(): Promise<MappedProject[]> {
+  /**
+   * Récupère uniquement les projets Odoo explicitement suivis (ajoutés dans l'app).
+   */
+  async getProjects(odooIds: number[]): Promise<MappedProject[]> {
+    if (!Array.isArray(odooIds) || odooIds.length === 0) return [];
     try {
-      // Filtrer uniquement les projets où l'utilisateur est follower
-      const domain = [['message_is_follower', '=', true]];
-
       const projects = await this.searchRead(
         'project.project',
-        domain,
-        ['id', 'name', 'description', 'active', 'stage_id', 'user_id', 'date_start', 'date']
+        [['id', 'in', odooIds]],
+        PROJECT_FIELDS
       );
-
-      console.log('[Odoo] Projects received:', projects);
-
-      if (!Array.isArray(projects)) {
-        console.error('[Odoo] projects is not an array:', typeof projects, projects);
-        return [];
-      }
-
-      return projects.map((p: OdooProject) => ({
-        odooId: p.id,
-        name: p.name,
-        description: this.stripHtml(p.description) || '',
-        status: this.mapProjectStatus(p),
-        createdAt: p.date_start || new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      }));
+      return projects.map((p: OdooProject) => this.mapProject(p));
     } catch (error) {
       console.error('Erreur lors de la récupération des projets:', error);
       return [];
     }
+  }
+
+  /**
+   * Recherche des projets Odoo par nom (ou client) pour les ajouter au suivi.
+   */
+  async searchProjects(query: string = '', limit: number = 30): Promise<MappedProject[]> {
+    const term = query.trim();
+    const domain = term
+      ? ['|', ['name', 'ilike', term], ['partner_id.name', 'ilike', term]]
+      : [];
+    const projects = await this.searchRead('project.project', domain, PROJECT_FIELDS, limit);
+    return projects.map((p: OdooProject) => this.mapProject(p));
+  }
+
+  mapProject(p: OdooProject): MappedProject {
+    return {
+      odooId: p.id,
+      name: p.name,
+      description: this.stripHtml(p.description) || '',
+      clientName: Array.isArray(p.partner_id) ? p.partner_id[1] : '',
+      status: this.mapProjectStatus(p),
+      createdAt: p.date_start || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
   }
 
   mapProjectStatus(project: OdooProject): 'active' | 'completed' | 'on-hold' {

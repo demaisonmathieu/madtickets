@@ -9,8 +9,47 @@
         <button @click="showFavoritesOnly = !showFavoritesOnly" class="btn btn-secondary" v-if="sortedProjects.length > 0">
           {{ showFavoritesOnly ? '📋 Tous' : '⭐ Favoris' }}
         </button>
-        <button @click="showForm = true" class="btn btn-primary">+ Nouveau Projet</button>
+        <button v-if="odooConfigured" @click="openOdooPicker" class="btn btn-primary">+ Ajouter un projet Odoo</button>
+        <button @click="showForm = true" class="btn btn-secondary">+ Nouveau Projet</button>
       </div>
+    </div>
+
+    <!-- Ajout volontaire d'un projet Odoo au suivi -->
+    <div v-if="showOdooPicker" class="card">
+      <div class="odoo-picker-header">
+        <h3>Ajouter un projet Odoo</h3>
+        <button @click="showOdooPicker = false" class="btn btn-secondary btn-sm">Fermer</button>
+      </div>
+      <form @submit.prevent="searchOdooProjects" class="search-input-wrapper">
+        <span class="search-icon">🔍</span>
+        <input
+          v-model="odooQuery"
+          type="text"
+          placeholder="Nom du projet ou du client dans Odoo..."
+          class="search-input"
+        />
+      </form>
+      <div v-if="odooError" class="alert-inline alert-error" style="margin-top: 0.75rem;">{{ odooError }}</div>
+      <p v-if="odooSearching" style="color: #666; margin-top: 0.75rem;">⏳ Recherche...</p>
+      <p v-else-if="odooResults.length === 0" style="color: #999; margin-top: 0.75rem;">Aucun projet trouvé.</p>
+      <ul v-else class="odoo-results">
+        <li v-for="result in odooResults" :key="`odoo-project-${result.odooId}`">
+          <div>
+            <strong>{{ result.name }}</strong>
+            <small v-if="result.clientName" style="color: #666;"> · {{ result.clientName }}</small>
+            <small style="color: #999;"> · ID {{ result.odooId }}</small>
+          </div>
+          <span v-if="isTracked(result.odooId)" class="badge badge-completed">Déjà suivi</span>
+          <button
+            v-else
+            @click="addOdooProject(result)"
+            class="btn btn-primary btn-sm"
+            :disabled="addingOdooId !== null"
+          >
+            {{ addingOdooId === result.odooId ? '⏳' : '+ Suivre' }}
+          </button>
+        </li>
+      </ul>
     </div>
 
     <!-- Barre de recherche -->
@@ -243,6 +282,7 @@ import { parseGithubRepoRef, fetchGithubRepository } from '../services/github'
 import { parseGitlabRepoRef, fetchGitlabRepository } from '../services/gitlab'
 import RichTextEditor from './RichTextEditor.vue'
 import { auth } from '../services/auth'
+import { odooService } from '../services/odoo-new'
 
 const createProjectForm = (currentUserId = null) => ({
   name: '',
@@ -318,6 +358,13 @@ export default {
       gitlabConnectError: '',
       gitlabConnecting: false,
       gitlabRepoPreview: null,
+      odooConfigured: odooService.isConfigured(),
+      showOdooPicker: false,
+      odooQuery: '',
+      odooResults: [],
+      odooSearching: false,
+      odooError: '',
+      addingOdooId: null,
       form: createProjectForm(null)
     }
   },
@@ -359,6 +406,50 @@ export default {
   methods: {
     async loadProjects() {
       this.projects = await db.getAllProjects()
+    },
+    isTracked(odooId) {
+      return this.projects.some(p => p.odooId === odooId)
+    },
+    async openOdooPicker() {
+      this.showOdooPicker = true
+      if (this.odooResults.length === 0) await this.searchOdooProjects()
+    },
+    async searchOdooProjects() {
+      this.odooSearching = true
+      this.odooError = ''
+      try {
+        this.odooResults = await odooService.searchProjects(this.odooQuery)
+      } catch (error) {
+        this.odooError = `Recherche Odoo impossible : ${error.message}`
+        this.odooResults = []
+      } finally {
+        this.odooSearching = false
+      }
+    },
+    async addOdooProject(odooProject) {
+      this.addingOdooId = odooProject.odooId
+      this.odooError = ''
+      try {
+        const payload = {
+          ...odooProject,
+          assignedUserId: this.currentUserId,
+          followerUserIds: this.normalizeFollowerUserIds([], this.currentUserId)
+        }
+        try {
+          const stageColumns = await odooService.getProjectStages(odooProject.odooId)
+          if (Array.isArray(stageColumns) && stageColumns.length > 0) {
+            payload.kanbanColumns = stageColumns
+          }
+        } catch (stageError) {
+          console.warn('[Odoo] Étapes projet non récupérées:', odooProject.odooId, stageError)
+        }
+        await db.addProject(payload)
+        await this.loadProjects()
+      } catch (error) {
+        this.odooError = `Ajout impossible : ${error.message}`
+      } finally {
+        this.addingOdooId = null
+      }
     },
     async saveProject() {
       const followerUserIds = this.normalizeFollowerUserIds(this.form.followerUserIds, this.form.assignedUserId)
@@ -754,6 +845,30 @@ export default {
 
 .search-bar {
   margin-bottom: 1rem;
+}
+
+.odoo-picker-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.odoo-results {
+  list-style: none;
+  padding: 0;
+  margin: 0.75rem 0 0;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.odoo-results li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 0.25rem;
+  border-bottom: 1px solid #eee;
 }
 
 .search-input-wrapper {
