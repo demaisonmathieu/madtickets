@@ -262,6 +262,14 @@ class OdooService {
     this.version = parseInt(String(version));
   }
 
+  /**
+   * JSON-2 uniquement avec une clé API (Odoo 19+). Avec login/mot de passe,
+   * on passe par XML-RPC quelle que soit la version.
+   */
+  useJson2(): boolean {
+    return !!(this.version && this.version >= 19 && this.apiKey);
+  }
+
   async testConnection(): Promise<AuthResult | any> {
     if (!this.url) {
       throw new Error('URL Odoo manquante');
@@ -270,12 +278,8 @@ class OdooService {
     // Détecter la version
     await this.detectVersion();
 
-    if (this.version && this.version >= 19) {
+    if (this.useJson2()) {
       // Odoo 19+ avec API Key
-      if (!this.apiKey) {
-        throw new Error('API Key requise pour Odoo 19+');
-      }
-
       const response = await fetch(`${this.url}/json/2/res.users/context_get`, {
         method: 'POST',
         headers: {
@@ -296,9 +300,11 @@ class OdooService {
 
       return await response.json();
     } else {
-      // Odoo 18 et antérieurs avec login/password
+      // XML-RPC avec login/mot de passe (Odoo 18 et antérieurs, ou Odoo 19 sans clé API)
       if (!this.username || !this.password) {
-        throw new Error('Login et mot de passe requis pour Odoo 18 et antérieurs');
+        throw new Error(this.version && this.version >= 19
+          ? 'API Key ou login/mot de passe requis'
+          : 'Login et mot de passe requis pour Odoo 18 et antérieurs');
       }
 
       return await this.authenticateXmlRpc();
@@ -564,7 +570,7 @@ class OdooService {
       await this.detectVersion();
     }
 
-    if (this.version && this.version >= 19) {
+    if (this.useJson2()) {
       // API JSON-2
       return await this.callMethodJson2(model, method, params);
     } else {
@@ -1903,12 +1909,12 @@ class OdooService {
         await this.detectVersion();
       }
 
-      if ((!this.version || this.version < 19) && !this.uid) {
+      if (!this.useJson2() && !this.uid) {
         await this.authenticateXmlRpc();
       }
 
       const currentUid = this.uid;
-      if ((!this.version || this.version < 19) && !currentUid) {
+      if (!this.useJson2() && !currentUid) {
         throw new Error('Impossible de déterminer l\'utilisateur Odoo connecté');
       }
       
@@ -2114,12 +2120,12 @@ class OdooService {
         await this.detectVersion();
       }
 
-      if ((!this.version || this.version < 19) && !this.uid) {
+      if (!this.useJson2() && !this.uid) {
         await this.authenticateXmlRpc();
       }
 
       const currentUid = this.uid;
-      if ((!this.version || this.version < 19) && !currentUid) {
+      if (!this.useJson2() && !currentUid) {
         throw new Error('Impossible de déterminer l\'utilisateur Odoo connecté');
       }
 

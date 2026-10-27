@@ -63,10 +63,10 @@
         <div class="form-group">
           <label>Version Odoo *</label>
           <select v-model="config.version" required>
-            <option value="18">Odoo 18 ou antérieur (XML-RPC)</option>
-            <option value="19">Odoo 19+ (JSON-2)</option>
+            <option value="18">Odoo 18 ou antérieur</option>
+            <option value="19">Odoo 19+</option>
           </select>
-          <small>Sélectionnez votre version d'Odoo</small>
+          <small>Odoo 19+ : API Key → JSON-2, Login/Mot de passe → XML-RPC</small>
         </div>
 
         <div class="auth-mode">
@@ -484,6 +484,8 @@ export default {
       }
     },
     saveConfig() {
+      // La version doit être positionnée avant saveConfig, qui la persiste
+      odooService.setVersion(this.config.version)
       odooService.saveConfig(
         this.config.url,
         this.config.db,
@@ -491,7 +493,6 @@ export default {
         this.authMode === 'password' ? this.config.username : null,
         this.authMode === 'password' ? this.config.password : null
       )
-      odooService.setVersion(this.config.version)
       this.isConfigured = true
       this.connectionStatus = {
         type: 'success',
